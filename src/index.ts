@@ -21,13 +21,107 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-
 "use strict";
 
-// Mobile promo section
+interface Config {
+  AUTOSPLAT: boolean;
+  BPM: number;
+  SIM_RESOLUTION: number;
+  DYE_RESOLUTION: number;
+  CAPTURE_RESOLUTION: number;
+  DENSITY_DISSIPATION: number;
+  VELOCITY_DISSIPATION: number;
+  PRESSURE: number;
+  PRESSURE_ITERATIONS: number;
+  CURL: number;
+  SPLAT_RADIUS: number;
+  SPLAT_FORCE: number;
+  SHADING: boolean;
+  COLORFUL: boolean;
+  COLOR_UPDATE_SPEED: number;
+  PAUSED: boolean;
+  BACK_COLOR: { r: number; g: number; b: number };
+  TRANSPARENT: boolean;
+  BLOOM: boolean;
+  BLOOM_ITERATIONS: number;
+  BLOOM_RESOLUTION: number;
+  BLOOM_INTENSITY: number;
+  BLOOM_THRESHOLD: number;
+  BLOOM_SOFT_KNEE: number;
+  SUNRAYS: boolean;
+  SUNRAYS_RESOLUTION: number;
+  SUNRAYS_WEIGHT: number;
+}
 
-const promoPopup = document.getElementsByClassName("promo")[0];
-const promoPopupClose = document.getElementsByClassName("promo-close")[0];
+interface Pointer {
+  id: number;
+  texcoordX: number;
+  texcoordY: number;
+  prevTexcoordX: number;
+  prevTexcoordY: number;
+  deltaX: number;
+  deltaY: number;
+  down: boolean;
+  moved: boolean;
+  color: { r: number; g: number; b: number };
+}
+
+interface Format {
+  internalFormat: number;
+  format: number;
+}
+
+interface WebGLContext {
+  gl: WebGLRenderingContext | WebGL2RenderingContext;
+  ext: {
+    formatRGBA: Format;
+    formatRG: Format;
+    formatR: Format;
+    halfFloatTexType: unknown;
+    supportLinearFiltering: boolean;
+  };
+}
+
+interface FramebufferObject {
+  texture: WebGLTexture;
+  fbo: WebGLFramebuffer;
+  width: number;
+  height: number;
+  texelSizeX: number;
+  texelSizeY: number;
+  attach: (id: number) => number;
+}
+
+interface DoubleFramebufferObject {
+  width: number;
+  height: number;
+  texelSizeX: number;
+  texelSizeY: number;
+  read: FramebufferObject;
+  write: FramebufferObject;
+  swap: () => void;
+}
+
+interface Material {
+  vertexShader: WebGLShader;
+  fragmentShaderSource: string;
+  programs: WebGLProgram[];
+  activeProgram: WebGLProgram | null;
+  uniforms: Record<string, WebGLUniformLocation | null>;
+  setKeywords: (keywords: string[]) => void;
+  bind: () => void;
+}
+
+interface Program {
+  uniforms: Record<string, WebGLUniformLocation | null>;
+  program: WebGLProgram;
+  bind: () => void;
+}
+
+const promoPopup = document.getElementsByClassName("promo")[0] as HTMLElement;
+const promoPopupClose = document.getElementsByClassName(
+  "promo-close"
+)[0] as HTMLElement;
 
 if (isMobile()) {
   setTimeout(() => {
@@ -35,17 +129,15 @@ if (isMobile()) {
   }, 20000);
 }
 
-promoPopupClose.addEventListener("click", (e) => {
+promoPopupClose.addEventListener("click", () => {
   promoPopup.style.display = "none";
 });
 
-// Simulation section
-
-const canvas = document.getElementsByTagName("canvas")[0];
+const canvas = document.getElementsByTagName("canvas")[0] as HTMLCanvasElement;
 
 resizeCanvas();
 
-let config = {
+const config: Config = {
   AUTOSPLAT: false,
   BPM: 120,
   SIM_RESOLUTION: 128,
@@ -75,22 +167,26 @@ let config = {
   SUNRAYS_WEIGHT: 1.0,
 };
 
-function pointerPrototype() {
-  this.id = -1;
-  this.texcoordX = 0;
-  this.texcoordY = 0;
-  this.prevTexcoordX = 0;
-  this.prevTexcoordY = 0;
-  this.deltaX = 0;
-  this.deltaY = 0;
-  this.down = false;
-  this.moved = false;
-  this.color = [30, 0, 300];
+class PointerPrototype implements Pointer {
+  id = -1;
+  texcoordX = 0;
+  texcoordY = 0;
+  prevTexcoordX = 0;
+  prevTexcoordY = 0;
+  deltaX = 0;
+  deltaY = 0;
+  down = false;
+  moved = false;
+  color: {
+    r: number;
+    g: number;
+    b: number;
+  } = { r: 30, g: 0, b: 300 };
 }
 
-let pointers = [];
-let splatStack = [];
-pointers.push(new pointerPrototype());
+const pointers: Pointer[] = [];
+const splatStack: number[] = [];
+pointers.push(new PointerPrototype());
 
 const { gl, ext } = getWebGLContext(canvas);
 
@@ -106,7 +202,7 @@ if (!ext.supportLinearFiltering) {
 
 startGUI();
 
-function getWebGLContext(canvas) {
+function getWebGLContext(canvas: HTMLCanvasElement): WebGLContext {
   const params = {
     alpha: true,
     depth: false,
@@ -115,29 +211,40 @@ function getWebGLContext(canvas) {
     preserveDrawingBuffer: false,
   };
 
-  let gl = canvas.getContext("webgl2", params);
+  let gl = canvas.getContext("webgl2", params) as WebGL2RenderingContext | null;
   const isWebGL2 = !!gl;
-  if (!isWebGL2)
+  if (!isWebGL2) {
     gl =
-      canvas.getContext("webgl", params) ||
-      canvas.getContext("experimental-webgl", params);
+      (canvas.getContext("webgl", params) as WebGLRenderingContext | null) ||
+      (canvas.getContext(
+        "experimental-webgl",
+        params
+      ) as WebGLRenderingContext | null);
+  }
 
-  let halfFloat;
-  let supportLinearFiltering;
+  if (!gl) {
+    throw new Error("WebGL not supported");
+  }
+
+  let halfFloat: unknown;
+  let supportLinearFiltering: boolean;
+
   if (isWebGL2) {
     gl.getExtension("EXT_color_buffer_float");
-    supportLinearFiltering = gl.getExtension("OES_texture_float_linear");
+    supportLinearFiltering = !!gl.getExtension("OES_texture_float_linear");
   } else {
     halfFloat = gl.getExtension("OES_texture_half_float");
-    supportLinearFiltering = gl.getExtension("OES_texture_half_float_linear");
+    supportLinearFiltering = !!gl.getExtension("OES_texture_half_float_linear");
   }
 
   gl.clearColor(0.0, 0.0, 0.0, 1.0);
 
-  const halfFloatTexType = isWebGL2 ? gl.HALF_FLOAT : halfFloat.HALF_FLOAT_OES;
-  let formatRGBA;
-  let formatRG;
-  let formatR;
+  const halfFloatTexType = isWebGL2
+    ? gl.HALF_FLOAT
+    : (halfFloat as any).HALF_FLOAT_OES;
+  let formatRGBA: unknown;
+  let formatRG: unknown;
+  let formatR: unknown;
 
   if (isWebGL2) {
     formatRGBA = getSupportedFormat(gl, gl.RGBA16F, gl.RGBA, halfFloatTexType);
@@ -148,13 +255,6 @@ function getWebGLContext(canvas) {
     formatRG = getSupportedFormat(gl, gl.RGBA, gl.RGBA, halfFloatTexType);
     formatR = getSupportedFormat(gl, gl.RGBA, gl.RGBA, halfFloatTexType);
   }
-
-  ga(
-    "send",
-    "event",
-    isWebGL2 ? "webgl2" : "webgl",
-    formatRGBA == null ? "not supported" : "supported"
-  );
 
   return {
     gl,
@@ -168,7 +268,12 @@ function getWebGLContext(canvas) {
   };
 }
 
-function getSupportedFormat(gl, internalFormat, format, type) {
+function getSupportedFormat(
+  gl: WebGL2RenderingContext,
+  internalFormat: number,
+  format: number,
+  type: number
+): unknown {
   if (!supportRenderTextureFormat(gl, internalFormat, format, type)) {
     switch (internalFormat) {
       case gl.R16F:
@@ -186,7 +291,12 @@ function getSupportedFormat(gl, internalFormat, format, type) {
   };
 }
 
-function supportRenderTextureFormat(gl, internalFormat, format, type) {
+function supportRenderTextureFormat(
+  gl: WebGL2RenderingContext,
+  internalFormat: number,
+  format: number,
+  type: number
+) {
   let texture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -272,13 +382,14 @@ function startGUI() {
 
 function autoSplat() {
   if (config.BPM === 0) {
-    clearTimeout();
+    clearInterval();
   }
-
-  setTimeout(() => {
-    splatStack.push(parseInt(Math.random() * 20) + 5);
-    autoSplat();
-  }, 60000 / config.BPM);
+  if (config.BPM > 0) {
+    setTimeout(() => {
+      splatStack.push(parseInt(Math.random() * 20) + 5);
+      autoSplat(config.BPM);
+    }, 60000 / config.BPM);
+  }
 }
 
 function isMobile() {
@@ -306,7 +417,15 @@ function captureScreenshot() {
   URL.revokeObjectURL(datauri);
 }
 
-function framebufferToTexture(target) {
+function framebufferToTexture(target: {
+  texture?: WebGLTexture;
+  fbo: any;
+  width: any;
+  height: any;
+  texelSizeX?: number;
+  texelSizeY?: number;
+  attach?: (id: any) => any;
+}) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
   let length = target.width * target.height * 4;
   let texture = new Float32Array(length);
@@ -314,7 +433,11 @@ function framebufferToTexture(target) {
   return texture;
 }
 
-function normalizeTexture(texture, width, height) {
+function normalizeTexture(
+  texture: string | any[] | Float32Array<ArrayBuffer>,
+  width: number,
+  height: number
+) {
   let result = new Uint8Array(texture.length);
   let id = 0;
   for (let i = height - 1; i >= 0; i--) {
@@ -330,13 +453,20 @@ function normalizeTexture(texture, width, height) {
   return result;
 }
 
-function clamp01(input) {
+function clamp01(input: number) {
   return Math.min(Math.max(input, 0), 1);
 }
 
-function textureToCanvas(texture, width, height) {
+function textureToCanvas(
+  texture: ArrayLike<number>,
+  width: number,
+  height: number
+) {
   let captureCanvas = document.createElement("canvas");
   let ctx = captureCanvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Failed to get canvas context");
+  }
   captureCanvas.width = width;
   captureCanvas.height = height;
 
@@ -347,7 +477,7 @@ function textureToCanvas(texture, width, height) {
   return captureCanvas;
 }
 
-function downloadURI(filename, uri) {
+function downloadURI(filename: string, uri: string) {
   let link = document.createElement("a");
   link.download = filename;
   link.href = uri;
@@ -357,7 +487,7 @@ function downloadURI(filename, uri) {
 }
 
 class Material {
-  constructor(vertexShader, fragmentShaderSource) {
+  constructor(vertexShader: WebGLShader | null, fragmentShaderSource: string) {
     this.vertexShader = vertexShader;
     this.fragmentShaderSource = fragmentShaderSource;
     this.programs = [];
@@ -365,7 +495,7 @@ class Material {
     this.uniforms = [];
   }
 
-  setKeywords(keywords) {
+  setKeywords = (keywords: string[]) => {
     let hash = 0;
     for (let i = 0; i < keywords.length; i++) hash += hashCode(keywords[i]);
 
@@ -384,26 +514,29 @@ class Material {
 
     this.uniforms = getUniforms(program);
     this.activeProgram = program;
-  }
+  };
 
-  bind() {
+  bind = () => {
     gl.useProgram(this.activeProgram);
-  }
+  };
 }
 
 class Program {
-  constructor(vertexShader, fragmentShader) {
+  constructor(
+    vertexShader: WebGLShader | null,
+    fragmentShader: WebGLShader | null
+  ) {
     this.uniforms = {};
     this.program = createProgram(vertexShader, fragmentShader);
     this.uniforms = getUniforms(this.program);
   }
 
-  bind() {
+  bind = () => {
     gl.useProgram(this.program);
-  }
+  };
 }
 
-function createProgram(vertexShader, fragmentShader) {
+function createProgram(vertexShader: WebGLShader, fragmentShader: WebGLShader) {
   let program = gl.createProgram();
   gl.attachShader(program, vertexShader);
   gl.attachShader(program, fragmentShader);
@@ -415,8 +548,8 @@ function createProgram(vertexShader, fragmentShader) {
   return program;
 }
 
-function getUniforms(program) {
-  let uniforms = [];
+function getUniforms(program: WebGLProgram) {
+  let uniforms: never[] = [];
   let uniformCount = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
   for (let i = 0; i < uniformCount; i++) {
     let uniformName = gl.getActiveUniform(program, i).name;
@@ -425,7 +558,11 @@ function getUniforms(program) {
   return uniforms;
 }
 
-function compileShader(type, source, keywords) {
+function compileShader(
+  type: number,
+  source: string,
+  keywords?: string[] | null
+) {
   source = addKeywords(source, keywords);
 
   const shader = gl.createShader(type);
@@ -438,10 +575,10 @@ function compileShader(type, source, keywords) {
   return shader;
 }
 
-function addKeywords(source, keywords) {
+function addKeywords(source: string, keywords?: any[] | null) {
   if (keywords == null) return source;
   let keywordsString = "";
-  keywords.forEach((keyword) => {
+  keywords.forEach((keyword: string) => {
     keywordsString += "#define " + keyword + "\n";
   });
   return keywordsString + source;
@@ -994,7 +1131,14 @@ const blit = (() => {
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
   gl.enableVertexAttribArray(0);
 
-  return (target, clear = false) => {
+  return (
+    target: {
+      width: number;
+      height: number;
+      fbo: WebGLFramebuffer | null;
+    } | null,
+    clear = false
+  ) => {
     if (target == null) {
       gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1017,15 +1161,84 @@ function CHECK_FRAMEBUFFER_STATUS() {
     console.trace("Framebuffer error: " + status);
 }
 
-let dye;
-let velocity;
-let divergence;
-let curl;
-let pressure;
-let bloom;
-let bloomFramebuffers = [];
-let sunrays;
-let sunraysTemp;
+let dye: {
+  texelSizeX: any;
+  texelSizeY: any;
+  read: any;
+  write: any;
+  swap: any;
+  width?: any;
+  height?: any;
+};
+
+let velocity: {
+  texelSizeX: any;
+  texelSizeY: any;
+  read: any;
+  write: any;
+  swap: any;
+  width?: any;
+  height?: any;
+};
+
+let divergence: {
+  attach: any;
+  texture?: WebGLTexture;
+  fbo?: WebGLFramebuffer;
+  width?: any;
+  height?: any;
+  texelSizeX?: number;
+  texelSizeY?: number;
+};
+
+let curl: {
+  attach: any;
+  texture?: WebGLTexture;
+  fbo?: WebGLFramebuffer;
+  width?: any;
+  height?: any;
+  texelSizeX?: number;
+  texelSizeY?: number;
+};
+
+let pressure: {
+  read: any;
+  write: any;
+  swap: any;
+  width?: any;
+  height?: any;
+  texelSizeX?: number;
+  texelSizeY?: number;
+};
+
+let bloom: {
+  attach: any;
+  texture?: WebGLTexture;
+  fbo?: WebGLFramebuffer;
+  width?: any;
+  height?: any;
+  texelSizeX?: number;
+  texelSizeY?: number;
+};
+let bloomFramebuffers: any[] = [];
+let sunrays: {
+  attach: any;
+  texture?: WebGLTexture;
+  fbo?: WebGLFramebuffer;
+  width?: any;
+  height?: any;
+  texelSizeX?: number;
+  texelSizeY?: number;
+};
+let sunraysTemp: {
+  texture: WebGLTexture;
+  fbo: WebGLFramebuffer;
+  width: any;
+  height: any;
+  texelSizeX: number;
+  texelSizeY: number;
+  attach(id: any): any;
+};
 
 let ditheringTexture = createTextureAsync("LDR_LLL1_0.png");
 
@@ -1048,7 +1261,7 @@ const divergenceProgram = new Program(baseVertexShader, divergenceShader);
 const curlProgram = new Program(baseVertexShader, curlShader);
 const vorticityProgram = new Program(baseVertexShader, vorticityShader);
 const pressureProgram = new Program(baseVertexShader, pressureShader);
-const gradienSubtractProgram = new Program(
+const gradientSubtractProgram = new Program(
   baseVertexShader,
   gradientSubtractShader
 );
@@ -1196,7 +1409,14 @@ function initSunraysFramebuffers() {
   );
 }
 
-function createFBO(w, h, internalFormat, format, type, param) {
+function createFBO(
+  w: number,
+  h: number,
+  internalFormat: number,
+  format: number,
+  type: unknown,
+  param: number
+) {
   gl.activeTexture(gl.TEXTURE0);
   let texture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -1228,7 +1448,7 @@ function createFBO(w, h, internalFormat, format, type, param) {
     height: h,
     texelSizeX,
     texelSizeY,
-    attach(id) {
+    attach(id: number) {
       gl.activeTexture(gl.TEXTURE0 + id);
       gl.bindTexture(gl.TEXTURE_2D, texture);
       return id;
@@ -1236,7 +1456,14 @@ function createFBO(w, h, internalFormat, format, type, param) {
   };
 }
 
-function createDoubleFBO(w, h, internalFormat, format, type, param) {
+function createDoubleFBO(
+  w: number,
+  h: number,
+  internalFormat: any,
+  format: any,
+  type: unknown,
+  param: number
+) {
   let fbo1 = createFBO(w, h, internalFormat, format, type, param);
   let fbo2 = createFBO(w, h, internalFormat, format, type, param);
 
@@ -1265,7 +1492,15 @@ function createDoubleFBO(w, h, internalFormat, format, type, param) {
   };
 }
 
-function resizeFBO(target, w, h, internalFormat, format, type, param) {
+function resizeFBO(
+  target: { attach: (arg0: number) => number },
+  w: any,
+  h: any,
+  internalFormat: any,
+  format: any,
+  type: any,
+  param: any
+) {
   let newFBO = createFBO(w, h, internalFormat, format, type, param);
   copyProgram.bind();
   gl.uniform1i(copyProgram.uniforms.uTexture, target.attach(0));
@@ -1273,7 +1508,38 @@ function resizeFBO(target, w, h, internalFormat, format, type, param) {
   return newFBO;
 }
 
-function resizeDoubleFBO(target, w, h, internalFormat, format, type, param) {
+function resizeDoubleFBO(
+  target: {
+    width: any;
+    height: any;
+    read: {
+      texture: WebGLTexture;
+      fbo: WebGLFramebuffer;
+      width: any;
+      height: any;
+      texelSizeX: number;
+      texelSizeY: number;
+      attach(id: any): any;
+    };
+    write: {
+      texture: WebGLTexture;
+      fbo: WebGLFramebuffer;
+      width: any;
+      height: any;
+      texelSizeX: number;
+      texelSizeY: number;
+      attach(id: any): any;
+    };
+    texelSizeX: number;
+    texelSizeY: number;
+  },
+  w: number,
+  h: number,
+  internalFormat: any,
+  format: any,
+  type: unknown,
+  param: number
+) {
   if (target.width == w && target.height == h) return target;
   target.read = resizeFBO(
     target.read,
@@ -1292,7 +1558,7 @@ function resizeDoubleFBO(target, w, h, internalFormat, format, type, param) {
   return target;
 }
 
-function createTextureAsync(url) {
+function createTextureAsync(url: string) {
   let texture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -1315,7 +1581,7 @@ function createTextureAsync(url) {
     texture,
     width: 1,
     height: 1,
-    attach(id) {
+    attach(id: number) {
       gl.activeTexture(gl.TEXTURE0 + id);
       gl.bindTexture(gl.TEXTURE_2D, texture);
       return id;
@@ -1380,7 +1646,7 @@ function resizeCanvas() {
   return false;
 }
 
-function updateColors(dt) {
+function updateColors(dt: number) {
   if (!config.COLORFUL) return;
 
   colorUpdateTimer += dt * config.COLOR_UPDATE_SPEED;
@@ -1403,7 +1669,7 @@ function applyInputs() {
   });
 }
 
-function step(dt) {
+function step(dt: number) {
   gl.disable(gl.BLEND);
 
   curlProgram.bind();
@@ -1456,18 +1722,18 @@ function step(dt) {
     pressure.swap();
   }
 
-  gradienSubtractProgram.bind();
+  gradientSubtractProgram.bind();
   gl.uniform2f(
-    gradienSubtractProgram.uniforms.texelSize,
+    gradientSubtractProgram.uniforms.texelSize,
     velocity.texelSizeX,
     velocity.texelSizeY
   );
   gl.uniform1i(
-    gradienSubtractProgram.uniforms.uPressure,
+    gradientSubtractProgram.uniforms.uPressure,
     pressure.read.attach(0)
   );
   gl.uniform1i(
-    gradienSubtractProgram.uniforms.uVelocity,
+    gradientSubtractProgram.uniforms.uVelocity,
     velocity.read.attach(1)
   );
   blit(velocity.write);
@@ -1512,7 +1778,17 @@ function step(dt) {
   dye.swap();
 }
 
-function render(target) {
+function render(
+  target: {
+    texture: WebGLTexture;
+    fbo: WebGLFramebuffer;
+    width: any;
+    height: any;
+    texelSizeX: number;
+    texelSizeY: number;
+    attach(id: any): any;
+  } | null
+) {
   if (config.BLOOM) applyBloom(dye.read, bloom);
   if (config.SUNRAYS) {
     applySunrays(dye.read, dye.write, sunrays);
@@ -1531,13 +1807,13 @@ function render(target) {
   drawDisplay(target);
 }
 
-function drawColor(target, color) {
+function drawColor(target: any, color: { r: any; g: any; b: any }) {
   colorProgram.bind();
   gl.uniform4f(colorProgram.uniforms.color, color.r, color.g, color.b, 1);
   blit(target);
 }
 
-function drawCheckerboard(target) {
+function drawCheckerboard(target: any) {
   checkerboardProgram.bind();
   gl.uniform1f(
     checkerboardProgram.uniforms.aspectRatio,
@@ -1546,7 +1822,7 @@ function drawCheckerboard(target) {
   blit(target);
 }
 
-function drawDisplay(target) {
+function drawDisplay(target: { width: number; height: number } | null) {
   let width = target == null ? gl.drawingBufferWidth : target.width;
   let height = target == null ? gl.drawingBufferHeight : target.height;
 
@@ -1565,10 +1841,14 @@ function drawDisplay(target) {
   }
   if (config.SUNRAYS)
     gl.uniform1i(displayMaterial.uniforms.uSunrays, sunrays.attach(3));
+
   blit(target);
 }
 
-function applyBloom(source, destination) {
+function applyBloom(
+  source: { attach: (arg0: number) => number },
+  destination: any
+) {
   if (bloomFramebuffers.length < 2) return;
 
   let last = destination;
@@ -1628,7 +1908,11 @@ function applyBloom(source, destination) {
   blit(destination);
 }
 
-function applySunrays(source, mask, destination) {
+function applySunrays(
+  source: { attach: (arg0: number) => number },
+  mask: { attach: (arg0: number) => number },
+  destination: any
+) {
   gl.disable(gl.BLEND);
   sunraysMaskProgram.bind();
   gl.uniform1i(sunraysMaskProgram.uniforms.uTexture, source.attach(0));
@@ -1640,7 +1924,15 @@ function applySunrays(source, mask, destination) {
   blit(destination);
 }
 
-function blur(target, temp, iterations) {
+function blur(
+  target: {
+    texelSizeX: number;
+    attach: (arg0: number) => number;
+    texelSizeY: number;
+  },
+  temp: { attach: (arg0: number) => number },
+  iterations: number
+) {
   blurProgram.bind();
   for (let i = 0; i < iterations; i++) {
     gl.uniform2f(blurProgram.uniforms.texelSize, target.texelSizeX, 0.0);
@@ -1653,13 +1945,13 @@ function blur(target, temp, iterations) {
   }
 }
 
-function splatPointer(pointer) {
+function splatPointer(pointer: Pointer) {
   let dx = pointer.deltaX * config.SPLAT_FORCE;
   let dy = pointer.deltaY * config.SPLAT_FORCE;
   splat(pointer.texcoordX, pointer.texcoordY, dx, dy, pointer.color);
 }
 
-function multipleSplats(amount) {
+function multipleSplats(amount: number) {
   for (let i = 0; i < amount; i++) {
     const color = generateColor();
     color.r *= 10.0;
@@ -1673,8 +1965,15 @@ function multipleSplats(amount) {
   }
 }
 
-function splat(x, y, dx, dy, color) {
+function splat(
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  color: { r: any; g: any; b: any }
+) {
   splatProgram.bind();
+
   gl.uniform1i(splatProgram.uniforms.uTarget, velocity.read.attach(0));
   gl.uniform1f(splatProgram.uniforms.aspectRatio, canvas.width / canvas.height);
   gl.uniform2f(splatProgram.uniforms.point, x, y);
@@ -1692,7 +1991,7 @@ function splat(x, y, dx, dy, color) {
   dye.swap();
 }
 
-function correctRadius(radius) {
+function correctRadius(radius: number) {
   let aspectRatio = canvas.width / canvas.height;
   if (aspectRatio > 1) radius *= aspectRatio;
   return radius;
@@ -1702,7 +2001,7 @@ canvas.addEventListener("mousedown", (e) => {
   let posX = scaleByPixelRatio(e.offsetX);
   let posY = scaleByPixelRatio(e.offsetY);
   let pointer = pointers.find((p) => p.id == -1);
-  if (pointer == null) pointer = new pointerPrototype();
+  if (pointer == null) pointer = new PointerPrototype();
   updatePointerDownData(pointer, -1, posX, posY);
 });
 
@@ -1722,7 +2021,7 @@ canvas.addEventListener("touchstart", (e) => {
   e.preventDefault();
   const touches = e.targetTouches;
   while (touches.length >= pointers.length)
-    pointers.push(new pointerPrototype());
+    pointers.push(new PointerPrototype());
   for (let i = 0; i < touches.length; i++) {
     let posX = scaleByPixelRatio(touches[i].pageX);
     let posY = scaleByPixelRatio(touches[i].pageY);
@@ -1761,7 +2060,12 @@ window.addEventListener("keydown", (e) => {
     splatStack.push(parseInt(Math.random() * 20) + 5);
 });
 
-function updatePointerDownData(pointer, id, posX, posY) {
+function updatePointerDownData(
+  pointer: Pointer,
+  id: number,
+  posX: number,
+  posY: number
+): void {
   pointer.id = id;
   pointer.down = true;
   pointer.moved = false;
@@ -1774,7 +2078,11 @@ function updatePointerDownData(pointer, id, posX, posY) {
   pointer.color = generateColor();
 }
 
-function updatePointerMoveData(pointer, posX, posY) {
+function updatePointerMoveData(
+  pointer: Pointer,
+  posX: number,
+  posY: number
+): void {
   pointer.prevTexcoordX = pointer.texcoordX;
   pointer.prevTexcoordY = pointer.texcoordY;
   pointer.texcoordX = posX / canvas.width;
@@ -1784,37 +2092,43 @@ function updatePointerMoveData(pointer, posX, posY) {
   pointer.moved = Math.abs(pointer.deltaX) > 0 || Math.abs(pointer.deltaY) > 0;
 }
 
-function updatePointerUpData(pointer) {
+function updatePointerUpData(pointer: Pointer): void {
   pointer.down = false;
 }
 
-function correctDeltaX(delta) {
-  let aspectRatio = canvas.width / canvas.height;
+function correctDeltaX(delta: number): number {
+  const aspectRatio = canvas.width / canvas.height;
   if (aspectRatio < 1) delta *= aspectRatio;
   return delta;
 }
 
-function correctDeltaY(delta) {
-  let aspectRatio = canvas.width / canvas.height;
+function correctDeltaY(delta: number): number {
+  const aspectRatio = canvas.width / canvas.height;
   if (aspectRatio > 1) delta /= aspectRatio;
   return delta;
 }
 
-function generateColor() {
-  let c = HSVtoRGB(Math.random(), 1.0, 1.0);
+function generateColor(): { r: number; g: number; b: number } {
+  const c = HSVtoRGB(Math.random(), 1.0, 1.0);
   c.r *= 0.15;
   c.g *= 0.15;
   c.b *= 0.15;
   return c;
 }
 
-function HSVtoRGB(h, s, v) {
-  let r, g, b, i, f, p, q, t;
-  i = Math.floor(h * 6);
-  f = h * 6 - i;
-  p = v * (1 - s);
-  q = v * (1 - f * s);
-  t = v * (1 - (1 - f) * s);
+function HSVtoRGB(
+  h: number,
+  s: number,
+  v: number
+): { r: number; g: number; b: number } {
+  let r: number = 0;
+  let g: number = 0;
+  let b: number = 0;
+  const i = Math.floor(h * 6);
+  const f = h * 6 - i;
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
 
   switch (i % 6) {
     case 0:
@@ -1837,54 +2151,59 @@ function HSVtoRGB(h, s, v) {
       break;
   }
 
-  return {
-    r,
-    g,
-    b,
-  };
+  return { r, g, b };
 }
 
-function normalizeColor(input) {
-  let output = {
+function normalizeColor(input: { r: number; g: number; b: number }): {
+  r: number;
+  g: number;
+  b: number;
+} {
+  return {
     r: input.r / 255,
     g: input.g / 255,
     b: input.b / 255,
   };
-  return output;
 }
 
-function wrap(value, min, max) {
-  let range = max - min;
-  if (range == 0) return min;
+function wrap(value: number, min: number, max: number): number {
+  const range = max - min;
+  if (range === 0) return min;
   return ((value - min) % range) + min;
 }
 
-function getResolution(resolution) {
+function getResolution(resolution: number): { width: number; height: number } {
   let aspectRatio = gl.drawingBufferWidth / gl.drawingBufferHeight;
   if (aspectRatio < 1) aspectRatio = 1.0 / aspectRatio;
 
-  let min = Math.round(resolution);
-  let max = Math.round(resolution * aspectRatio);
+  const min = Math.round(resolution);
+  const max = Math.round(resolution * aspectRatio);
 
-  if (gl.drawingBufferWidth > gl.drawingBufferHeight)
+  if (gl.drawingBufferWidth > gl.drawingBufferHeight) {
     return { width: max, height: min };
-  else return { width: min, height: max };
+  } else {
+    return { width: min, height: max };
+  }
 }
 
-function getTextureScale(texture, width, height) {
+function getTextureScale(
+  texture: { width: number; height: number },
+  width: number,
+  height: number
+): { x: number; y: number } {
   return {
     x: width / texture.width,
     y: height / texture.height,
   };
 }
 
-function scaleByPixelRatio(input) {
-  let pixelRatio = window.devicePixelRatio || 1;
+function scaleByPixelRatio(input: number): number {
+  const pixelRatio = window.devicePixelRatio || 1;
   return Math.floor(input * pixelRatio);
 }
 
-function hashCode(s) {
-  if (s.length == 0) return 0;
+function hashCode(s: string): number {
+  if (s.length === 0) return 0;
   let hash = 0;
   for (let i = 0; i < s.length; i++) {
     hash = (hash << 5) - hash + s.charCodeAt(i);
