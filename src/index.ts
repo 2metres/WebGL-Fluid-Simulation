@@ -2,28 +2,7 @@
 
 import { GUI } from "dat.gui";
 
-import {
-  ADVECTION_SHADER_SOURCE,
-  BASE_VERTEX_SHADER_SOURCE,
-  BLOOM_BLUR_SHADER_SOURCE,
-  BLOOM_FINAL_SHADER_SOURCE,
-  BLOOM_PREFILTER_SHADER_SOURCE,
-  BLUR_SHADER_SOURCE,
-  BLUR_VERTEX_SHADER_SOURCE,
-  CHECKERBOARD_SHADER_SOURCE,
-  CLEAR_SHADER_SOURCE,
-  COLOR_SHADER_SOURCE,
-  COPY_SHADER_SOURCE,
-  CURL_SHADER_SOURCE,
-  DISPLAY_SHADER_SOURCE,
-  DIVERGENCE_SHADER_SOURCE,
-  GRADIENT_SUBTRACT_SHADER_SOURCE,
-  PRESSURE_SHADER_SOURCE,
-  SPLAT_SHADER_SOURCE,
-  SUNRAYS_MASK_SHADER_SOURCE,
-  SUNRAYS_SHADER_SOURCE,
-  VORTICITY_SHADER_SOURCE,
-} from "./shaders";
+import * as shaders from "./shaders";
 import { Config, Format, Pointer, WebGLContext } from "./types";
 import {
   generateColor,
@@ -37,6 +16,7 @@ import {
   updatePointerUpData,
   wrap,
 } from "./utils";
+import { ColorFormats } from "tinycolor2";
 
 const canvas = document.getElementsByTagName("canvas")[0];
 
@@ -44,6 +24,7 @@ resizeCanvas();
 
 const config: Config = {
   AUTOSPLAT: false,
+  SPLATS: 10,
   BPM: 120,
   SIM_RESOLUTION: 128,
   DYE_RESOLUTION: 1024,
@@ -82,11 +63,7 @@ class PointerPrototype implements Pointer {
   deltaY = 0;
   down = false;
   moved = false;
-  color: {
-    r: number;
-    g: number;
-    b: number;
-  } = { r: 30, g: 0, b: 300 };
+  color: ColorFormats.RGB = { r: 30, g: 0, b: 300 };
 }
 
 const pointers: Pointer[] = [];
@@ -203,9 +180,11 @@ function supportRenderTextureFormat(
 }
 
 function startGUI() {
-  var gui = new GUI({ width: 300 });
+  const gui = new GUI({ width: 300 });
+
   gui
     .add(config, "DYE_RESOLUTION", {
+      "very high": 2048,
       high: 1024,
       medium: 512,
       low: 256,
@@ -217,27 +196,33 @@ function startGUI() {
     .add(config, "SIM_RESOLUTION", { 32: 32, 64: 64, 128: 128, 256: 256 })
     .name("sim resolution")
     .onFinishChange(initFramebuffers);
-  gui.add(config, "DENSITY_DISSIPATION", 0, 4.0).name("density diffusion");
+  gui.add(config, "DENSITY_DISSIPATION", 0.01, 4.0).name("density diffusion");
   gui.add(config, "VELOCITY_DISSIPATION", 0, 4.0).name("velocity diffusion");
-  gui.add(config, "PRESSURE", 0.0, 1.0).name("pressure");
+  gui.add(config, "PRESSURE", 0.0, 0.99).name("pressure");
   gui.add(config, "CURL", 0, 50).name("vorticity").step(1);
-  gui.add(config, "SPLAT_RADIUS", 0.01, 1.0).name("splat radius");
+  gui.add(config, "SPLAT_RADIUS", 0.01, 1).name("splat radius");
   gui.add(config, "SHADING").name("shading").onFinishChange(updateKeywords);
   gui.add(config, "COLORFUL").name("colorful");
   gui.add(config, "PAUSED").name("paused").listen();
 
-  gui
-    .add(
-      {
-        fun: () => {
-          splatStack.push(Math.random() * 20 + 5);
-        },
-      },
-      "fun"
-    )
-    .name("Random splats");
+  let autoSplatFolder = gui.addFolder("Auto Splat");
+  autoSplatFolder
+    .add(config, "AUTOSPLAT")
+    .name("enabled")
+    .onFinishChange(updateKeywords);
+  autoSplatFolder.add(config, "BPM", 0, 240).name("BPM").step(1);
+  autoSplatFolder.add(config, "SPLATS", 0, 100).name("Count").step(1);
 
-  gui.add(config, "BPM", 0, 240).name("BPM").step(1);
+  // gui
+  //   .add(
+  //     {
+  //       fun: () => {
+  //         splatStack.push(Math.random() * 20 + 5);
+  //       },
+  //     },
+  //     "fun"
+  //   )
+  //   .name("Random splats");
 
   let bloomFolder = gui.addFolder("Bloom");
   bloomFolder
@@ -261,7 +246,7 @@ function startGUI() {
 
   if (isMobile()) gui.close();
 
-  autoSplat();
+  autoSplat(config.BPM);
 }
 
 function autoSplat(bpm: number = 0) {
@@ -282,7 +267,7 @@ function isMobile() {
 
 function captureScreenshot() {
   let res = getResolution(gl, config.CAPTURE_RESOLUTION);
-  let target = createFBO(
+  let target = createFramebuffer(
     res.width,
     res.height,
     ext.formatRGBA.internalFormat,
@@ -303,8 +288,8 @@ function captureScreenshot() {
 function framebufferToTexture(target: {
   texture?: WebGLTexture;
   fbo: any;
-  width: any;
-  height: any;
+  width: number;
+  height: number;
   texelSizeX: number;
   texelSizeY: number;
   attach?: (id: any) => any;
@@ -314,30 +299,6 @@ function framebufferToTexture(target: {
   let texture = new Float32Array(length);
   gl.readPixels(0, 0, target.width, target.height, gl.RGBA, gl.FLOAT, texture);
   return texture;
-}
-
-function normalizeTexture(
-  texture: string | any[] | Float32Array<ArrayBuffer>,
-  width: number,
-  height: number
-) {
-  let result = new Uint8Array(texture.length);
-  let id = 0;
-  for (let i = height - 1; i >= 0; i--) {
-    for (let j = 0; j < width; j++) {
-      let nid = i * width * 4 + j * 4;
-      result[nid + 0] = clamp01(texture[id + 0]) * 255;
-      result[nid + 1] = clamp01(texture[id + 1]) * 255;
-      result[nid + 2] = clamp01(texture[id + 2]) * 255;
-      result[nid + 3] = clamp01(texture[id + 3]) * 255;
-      id += 4;
-    }
-  }
-  return result;
-}
-
-function clamp01(input: number) {
-  return Math.min(Math.max(input, 0), 1);
 }
 
 function textureToCanvas(
@@ -469,11 +430,7 @@ function getUniforms(program: WebGLProgram) {
   return uniforms;
 }
 
-function compileShader(
-  type: number,
-  source: string,
-  keywords?: string[] | null
-) {
+function compileShader(type: number, source: string, keywords?: string[]) {
   source = addKeywords(source, keywords);
 
   const shader = gl.createShader(type);
@@ -490,7 +447,7 @@ function compileShader(
   return shader;
 }
 
-function addKeywords(source: string, keywords?: any[] | null) {
+function addKeywords(source: string, keywords?: string[]) {
   if (keywords == null) return source;
   let keywordsString = "";
   keywords.forEach((keyword: string) => {
@@ -501,65 +458,80 @@ function addKeywords(source: string, keywords?: any[] | null) {
 
 const baseVertexShader = compileShader(
   gl.VERTEX_SHADER,
-  BASE_VERTEX_SHADER_SOURCE
+  shaders.BASE_VERTEX_SHADER_SOURCE
 );
 const blurVertexShader = compileShader(
   gl.VERTEX_SHADER,
-  BLUR_VERTEX_SHADER_SOURCE
+  shaders.BLUR_VERTEX_SHADER_SOURCE
 );
-const blurShader = compileShader(gl.FRAGMENT_SHADER, BLUR_SHADER_SOURCE);
-const copyShader = compileShader(gl.FRAGMENT_SHADER, COPY_SHADER_SOURCE);
-const clearShader = compileShader(gl.FRAGMENT_SHADER, CLEAR_SHADER_SOURCE);
-const colorShader = compileShader(gl.FRAGMENT_SHADER, COLOR_SHADER_SOURCE);
+const blurShader = compileShader(
+  gl.FRAGMENT_SHADER,
+  shaders.BLUR_SHADER_SOURCE
+);
+const copyShader = compileShader(
+  gl.FRAGMENT_SHADER,
+  shaders.COPY_SHADER_SOURCE
+);
+const clearShader = compileShader(
+  gl.FRAGMENT_SHADER,
+  shaders.CLEAR_SHADER_SOURCE
+);
+const colorShader = compileShader(
+  gl.FRAGMENT_SHADER,
+  shaders.COLOR_SHADER_SOURCE
+);
 const checkerboardShader = compileShader(
   gl.FRAGMENT_SHADER,
-  CHECKERBOARD_SHADER_SOURCE
+  shaders.CHECKERBOARD_SHADER_SOURCE
 );
 const bloomPrefilterShader = compileShader(
   gl.FRAGMENT_SHADER,
-  BLOOM_PREFILTER_SHADER_SOURCE
+  shaders.BLOOM_PREFILTER_SHADER_SOURCE
 );
 const bloomBlurShader = compileShader(
   gl.FRAGMENT_SHADER,
-  BLOOM_BLUR_SHADER_SOURCE
+  shaders.BLOOM_BLUR_SHADER_SOURCE
 );
 const bloomFinalShader = compileShader(
   gl.FRAGMENT_SHADER,
-  BLOOM_FINAL_SHADER_SOURCE
+  shaders.BLOOM_FINAL_SHADER_SOURCE
 );
 const sunraysMaskShader = compileShader(
   gl.FRAGMENT_SHADER,
-  SUNRAYS_MASK_SHADER_SOURCE
+  shaders.SUNRAYS_MASK_SHADER_SOURCE
 );
-const sunraysShader = compileShader(gl.FRAGMENT_SHADER, SUNRAYS_SHADER_SOURCE);
-const splatShader = compileShader(gl.FRAGMENT_SHADER, SPLAT_SHADER_SOURCE);
-
+const sunraysShader = compileShader(
+  gl.FRAGMENT_SHADER,
+  shaders.SUNRAYS_SHADER_SOURCE
+);
+const splatShader = compileShader(
+  gl.FRAGMENT_SHADER,
+  shaders.SPLAT_SHADER_SOURCE
+);
 const advectionShader = compileShader(
   gl.FRAGMENT_SHADER,
-  ADVECTION_SHADER_SOURCE,
-  ext.supportLinearFiltering ? null : ["MANUAL_FILTERING"]
+  shaders.ADVECTION_SHADER_SOURCE,
+  ext.supportLinearFiltering ? undefined : ["MANUAL_FILTERING"]
 );
-
 const divergenceShader = compileShader(
   gl.FRAGMENT_SHADER,
-  DIVERGENCE_SHADER_SOURCE
+  shaders.DIVERGENCE_SHADER_SOURCE
 );
-
-const curlShader = compileShader(gl.FRAGMENT_SHADER, CURL_SHADER_SOURCE);
-
+const curlShader = compileShader(
+  gl.FRAGMENT_SHADER,
+  shaders.CURL_SHADER_SOURCE
+);
 const vorticityShader = compileShader(
   gl.FRAGMENT_SHADER,
-  VORTICITY_SHADER_SOURCE
+  shaders.VORTICITY_SHADER_SOURCE
 );
-
 const pressureShader = compileShader(
   gl.FRAGMENT_SHADER,
-  PRESSURE_SHADER_SOURCE
+  shaders.PRESSURE_SHADER_SOURCE
 );
-
 const gradientSubtractShader = compileShader(
   gl.FRAGMENT_SHADER,
-  GRADIENT_SUBTRACT_SHADER_SOURCE
+  shaders.GRADIENT_SUBTRACT_SHADER_SOURCE
 );
 
 const blit = (() => {
@@ -602,23 +574,23 @@ const blit = (() => {
 })();
 
 let dye: {
-  texelSizeX: any;
-  texelSizeY: any;
+  texelSizeX: number;
+  texelSizeY: number;
   read: any;
   write: any;
   swap: any;
-  width: any;
-  height: any;
+  width: number;
+  height: number;
 };
 
 let velocity: {
-  texelSizeX: any;
-  texelSizeY: any;
+  texelSizeX: number;
+  texelSizeY: number;
   read: {
     texture: WebGLTexture;
     fbo: WebGLFramebuffer;
-    width: any;
-    height: any;
+    width: number;
+    height: number;
     texelSizeX: number;
     texelSizeY: number;
     attach(id: any): any;
@@ -626,14 +598,14 @@ let velocity: {
   write: {
     texture: WebGLTexture;
     fbo: WebGLFramebuffer;
-    width: any;
-    height: any;
+    width: number;
+    height: number;
     texelSizeX: number;
     texelSizeY: number;
     attach(id: any): any;
   };
-  width: any;
-  height: any;
+  width: number;
+  height: number;
   swap: () => void;
 };
 
@@ -641,8 +613,8 @@ let divergence: {
   attach: any;
   texture?: WebGLTexture;
   fbo: WebGLFramebuffer;
-  width: any;
-  height: any;
+  width: number;
+  height: number;
   texelSizeX: number;
   texelSizeY: number;
 };
@@ -661,8 +633,8 @@ let pressure: {
   read: any;
   write: any;
   swap: any;
-  width: any;
-  height: any;
+  width: number;
+  height: number;
   texelSizeX: number;
   texelSizeY: number;
 };
@@ -671,8 +643,8 @@ let bloom: {
   attach: any;
   texture?: WebGLTexture;
   fbo: WebGLFramebuffer;
-  width: any;
-  height: any;
+  width: number;
+  height: number;
   texelSizeX: number;
   texelSizeY: number;
 };
@@ -681,16 +653,16 @@ let sunrays: {
   attach: any;
   texture?: WebGLTexture;
   fbo: WebGLFramebuffer;
-  width: any;
-  height: any;
+  width: number;
+  height: number;
   texelSizeX: number;
   texelSizeY: number;
 };
 let sunraysTemp: {
   texture: WebGLTexture;
   fbo: WebGLFramebuffer;
-  width: any;
-  height: any;
+  width: number;
+  height: number;
   texelSizeX: number;
   texelSizeY: number;
   attach(id: any): any;
@@ -721,7 +693,10 @@ const gradientSubtractProgram = new Program(
   baseVertexShader,
   gradientSubtractShader
 );
-const displayMaterial = new Material(baseVertexShader, DISPLAY_SHADER_SOURCE);
+const displayMaterial = new Material(
+  baseVertexShader,
+  shaders.DISPLAY_SHADER_SOURCE
+);
 
 function initFramebuffers() {
   let simRes = getResolution(gl, config.SIM_RESOLUTION);
@@ -736,7 +711,7 @@ function initFramebuffers() {
   gl.disable(gl.BLEND);
 
   if (dye == null) {
-    dye = createDoubleFBO(
+    dye = createDoubleFramebuffer(
       dyeRes.width,
       dyeRes.height,
       rgba.internalFormat,
@@ -759,7 +734,7 @@ function initFramebuffers() {
   }
 
   if (velocity == null)
-    velocity = createDoubleFBO(
+    velocity = createDoubleFramebuffer(
       simRes.width,
       simRes.height,
       rg.internalFormat,
@@ -778,7 +753,7 @@ function initFramebuffers() {
       filtering
     );
 
-  divergence = createFBO(
+  divergence = createFramebuffer(
     simRes.width,
     simRes.height,
     r.internalFormat,
@@ -786,7 +761,7 @@ function initFramebuffers() {
     texType,
     gl.NEAREST
   );
-  curl = createFBO(
+  curl = createFramebuffer(
     simRes.width,
     simRes.height,
     r.internalFormat,
@@ -794,7 +769,7 @@ function initFramebuffers() {
     texType,
     gl.NEAREST
   );
-  pressure = createDoubleFBO(
+  pressure = createDoubleFramebuffer(
     simRes.width,
     simRes.height,
     r.internalFormat,
@@ -814,7 +789,7 @@ function initBloomFramebuffers() {
   const rgba = ext.formatRGBA;
   const filtering = ext.supportLinearFiltering ? gl.LINEAR : gl.NEAREST;
 
-  bloom = createFBO(
+  bloom = createFramebuffer(
     res.width,
     res.height,
     rgba.internalFormat,
@@ -830,7 +805,7 @@ function initBloomFramebuffers() {
 
     if (width < 2 || height < 2) break;
 
-    let fbo = createFBO(
+    let fbo = createFramebuffer(
       width,
       height,
       rgba.internalFormat,
@@ -849,7 +824,7 @@ function initSunraysFramebuffers() {
   const r = ext.formatR;
   const filtering = ext.supportLinearFiltering ? gl.LINEAR : gl.NEAREST;
 
-  sunrays = createFBO(
+  sunrays = createFramebuffer(
     res.width,
     res.height,
     r.internalFormat,
@@ -857,7 +832,7 @@ function initSunraysFramebuffers() {
     texType,
     filtering
   );
-  sunraysTemp = createFBO(
+  sunraysTemp = createFramebuffer(
     res.width,
     res.height,
     r.internalFormat,
@@ -867,7 +842,7 @@ function initSunraysFramebuffers() {
   );
 }
 
-function createFBO(
+function createFramebuffer(
   w: number,
   h: number,
   internalFormat: number,
@@ -914,16 +889,16 @@ function createFBO(
   };
 }
 
-function createDoubleFBO(
+function createDoubleFramebuffer(
   w: number,
   h: number,
-  internalFormat: any,
-  format: any,
+  internalFormat: number,
+  format: number,
   type: number,
   param: number
 ) {
-  let fbo1 = createFBO(w, h, internalFormat, format, type, param);
-  let fbo2 = createFBO(w, h, internalFormat, format, type, param);
+  let fbo1 = createFramebuffer(w, h, internalFormat, format, type, param);
+  let fbo2 = createFramebuffer(w, h, internalFormat, format, type, param);
 
   return {
     width: w,
@@ -952,14 +927,14 @@ function createDoubleFBO(
 
 function resizeFBO(
   target: { attach: (arg0: number) => number },
-  w: any,
-  h: any,
-  internalFormat: any,
-  format: any,
+  w: number,
+  h: number,
+  internalFormat: number,
+  format: number,
   type: any,
   param: any
 ) {
-  let newFBO = createFBO(w, h, internalFormat, format, type, param);
+  let newFBO = createFramebuffer(w, h, internalFormat, format, type, param);
   copyProgram.bind();
   gl.uniform1i(copyProgram.uniforms.uTexture, target.attach(0));
   blit(newFBO);
@@ -968,13 +943,13 @@ function resizeFBO(
 
 function resizeDoubleFBO(
   target: {
-    width: any;
-    height: any;
+    width: number;
+    height: number;
     read: {
       texture: WebGLTexture;
       fbo: WebGLFramebuffer;
-      width: any;
-      height: any;
+      width: number;
+      height: number;
       texelSizeX: number;
       texelSizeY: number;
       attach(id: any): any;
@@ -982,8 +957,8 @@ function resizeDoubleFBO(
     write: {
       texture: WebGLTexture;
       fbo: WebGLFramebuffer;
-      width: any;
-      height: any;
+      width: number;
+      height: number;
       texelSizeX: number;
       texelSizeY: number;
       attach(id: any): any;
@@ -994,8 +969,8 @@ function resizeDoubleFBO(
   },
   w: number,
   h: number,
-  internalFormat: any,
-  format: any,
+  internalFormat: number,
+  format: number,
   type: number,
   param: number
 ) {
@@ -1009,7 +984,7 @@ function resizeDoubleFBO(
     type,
     param
   );
-  target.write = createFBO(w, h, internalFormat, format, type, param);
+  target.write = createFramebuffer(w, h, internalFormat, format, type, param);
   target.width = w;
   target.height = h;
   target.texelSizeX = 1.0 / w;
@@ -1069,7 +1044,6 @@ function updateKeywords() {
   if (config.SHADING) displayKeywords.push("SHADING");
   if (config.BLOOM) displayKeywords.push("BLOOM");
   if (config.SUNRAYS) displayKeywords.push("SUNRAYS");
-  if (config.AUTOSPLAT) displayKeywords.push("AUTOSPLAT");
   displayMaterial.setKeywords(displayKeywords);
 }
 
@@ -1250,8 +1224,8 @@ function render(
   target: {
     texture: WebGLTexture;
     fbo: WebGLFramebuffer;
-    width: any;
-    height: any;
+    width: number;
+    height: number;
     texelSizeX: number;
     texelSizeY: number;
     attach(id: any): any;
@@ -1262,7 +1236,6 @@ function render(
     applySunrays(dye.read, dye.write, sunrays);
     blur(sunrays, sunraysTemp, 1);
   }
-
   if (target == null || !config.TRANSPARENT) {
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.enable(gl.BLEND);
@@ -1275,7 +1248,7 @@ function render(
   drawDisplay(target);
 }
 
-function drawColor(target: any, color: { r: any; g: any; b: any }) {
+function drawColor(target: any, color: ColorFormats.RGB) {
   colorProgram.bind();
   gl.uniform4f(colorProgram.uniforms.color, color.r, color.g, color.b, 1);
   blit(target);
@@ -1445,7 +1418,7 @@ function splat(
   y: number,
   dx: number,
   dy: number,
-  color: { r: any; g: any; b: any }
+  color: ColorFormats.RGB
 ) {
   splatProgram.bind();
 

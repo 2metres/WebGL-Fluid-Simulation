@@ -1,5 +1,6 @@
 export interface Config {
   AUTOSPLAT: boolean;
+  SPLATS: number;
   BPM: number;
   SIM_RESOLUTION: number;
   DYE_RESOLUTION: number;
