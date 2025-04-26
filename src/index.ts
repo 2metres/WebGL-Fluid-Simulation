@@ -196,8 +196,8 @@ function startGUI() {
     .add(config, "SIM_RESOLUTION", { 32: 32, 64: 64, 128: 128, 256: 256 })
     .name("sim resolution")
     .onFinishChange(initFramebuffers);
-  gui.add(config, "DENSITY_DISSIPATION", 0.01, 4.0).name("density diffusion");
-  gui.add(config, "VELOCITY_DISSIPATION", 0, 4.0).name("velocity diffusion");
+  gui.add(config, "DENSITY_DISSIPATION", 0.01, 5.0).name("density diffusion");
+  gui.add(config, "VELOCITY_DISSIPATION", 0, 5.0).name("velocity diffusion");
   gui.add(config, "PRESSURE", 0.0, 0.99).name("pressure");
   gui.add(config, "CURL", 0, 50).name("vorticity").step(1);
   gui.add(config, "SPLAT_RADIUS", 0.01, 1).name("splat radius");
@@ -211,7 +211,7 @@ function startGUI() {
     .name("enabled")
     .onFinishChange(updateKeywords);
   autoSplatFolder.add(config, "BPM", 0, 240).name("BPM").step(1);
-  autoSplatFolder.add(config, "SPLATS", 0, 100).name("Count").step(1);
+  autoSplatFolder.add(config, "SPLATS", 0, 128).name("Count").step(1);
 
   // gui
   //   .add(
@@ -250,12 +250,12 @@ function startGUI() {
 }
 
 function autoSplat(bpm: number = 0) {
-  if (config.BPM === 0) {
+  if (config.BPM === 0 || config.PAUSED) {
     clearInterval();
   }
   if (config.BPM > 0) {
     setTimeout(() => {
-      splatStack.push(Math.random() * 20 + 5);
+      splatStack.push(config.SPLATS);
       autoSplat(config.BPM);
     }, 60000 / config.BPM);
   }
@@ -1511,6 +1511,5 @@ window.addEventListener("touchend", (e) => {
 
 window.addEventListener("keydown", (e) => {
   if (e.code === "KeyP") config.PAUSED = !config.PAUSED;
-  if (e.key === "Spacebar" || e.key === " ")
-    splatStack.push(Math.random() * 20 + 5);
+  if (e.key === "Spacebar" || e.key === " ") splatStack.push(config.SPLATS);
 });

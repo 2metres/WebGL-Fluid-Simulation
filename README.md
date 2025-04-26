@@ -1,9 +1,5 @@
 # WebGL Fluid Simulation
 
-[Play here](https://paveldogreat.github.io/WebGL-Fluid-Simulation/)
-
-<img src="/screenshot.jpg?raw=true" width="880">
-
 ## References
 
 https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu
