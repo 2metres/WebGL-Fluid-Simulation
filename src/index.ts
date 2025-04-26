@@ -24,6 +24,8 @@ SOFTWARE.
 
 "use strict";
 
+import { GUI } from "dat.gui";
+
 import {
   ADVECTION_SHADER_SOURCE,
   BASE_VERTEX_SHADER_SOURCE,
@@ -47,8 +49,18 @@ import {
   VORTICITY_SHADER_SOURCE,
 } from "./shaders";
 import { Config, Format, Pointer, WebGLContext } from "./types";
-
-import { GUI } from "dat.gui";
+import {
+  generateColor,
+  getResolution,
+  getTextureScale,
+  hashCode,
+  normalizeColor,
+  scaleByPixelRatio,
+  updatePointerDownData,
+  updatePointerMoveData,
+  updatePointerUpData,
+  wrap,
+} from "./utils";
 
 const promoPopup = document.getElementsByClassName("promo")[0] as HTMLElement;
 const promoPopupClose = document.getElementsByClassName(
@@ -306,7 +318,7 @@ function isMobile() {
 }
 
 function captureScreenshot() {
-  let res = getResolution(config.CAPTURE_RESOLUTION);
+  let res = getResolution(gl, config.CAPTURE_RESOLUTION);
   let target = createFBO(
     res.width,
     res.height,
@@ -471,6 +483,7 @@ class Program {
 
 function createProgram(vertexShader: WebGLShader, fragmentShader: WebGLShader) {
   let program = gl.createProgram();
+
   gl.attachShader(program, vertexShader);
   gl.attachShader(program, fragmentShader);
   gl.linkProgram(program);
@@ -748,8 +761,8 @@ const gradientSubtractProgram = new Program(
 const displayMaterial = new Material(baseVertexShader, DISPLAY_SHADER_SOURCE);
 
 function initFramebuffers() {
-  let simRes = getResolution(config.SIM_RESOLUTION);
-  let dyeRes = getResolution(config.DYE_RESOLUTION);
+  let simRes = getResolution(gl, config.SIM_RESOLUTION);
+  let dyeRes = getResolution(gl, config.DYE_RESOLUTION);
 
   const texType = ext.halfFloatTexType;
   const rgba = ext.formatRGBA;
@@ -832,7 +845,7 @@ function initFramebuffers() {
 }
 
 function initBloomFramebuffers() {
-  let res = getResolution(config.BLOOM_RESOLUTION);
+  let res = getResolution(gl, config.BLOOM_RESOLUTION);
 
   const texType = ext.halfFloatTexType;
   const rgba = ext.formatRGBA;
@@ -867,7 +880,7 @@ function initBloomFramebuffers() {
 }
 
 function initSunraysFramebuffers() {
-  let res = getResolution(config.SUNRAYS_RESOLUTION);
+  let res = getResolution(gl, config.SUNRAYS_RESOLUTION);
 
   const texType = ext.halfFloatTexType;
   const r = ext.formatR;
@@ -1501,7 +1514,8 @@ canvas.addEventListener("mousedown", (e) => {
   let posY = scaleByPixelRatio(e.offsetY);
   let pointer = pointers.find((p) => p.id == -1);
   if (pointer == null) pointer = new PointerPrototype();
-  updatePointerDownData(pointer, -1, posX, posY);
+
+  updatePointerDownData(canvas, pointer, -1, posX, posY);
 });
 
 canvas.addEventListener("mousemove", (e) => {
@@ -1509,7 +1523,7 @@ canvas.addEventListener("mousemove", (e) => {
   if (!pointer.down) return;
   let posX = scaleByPixelRatio(e.offsetX);
   let posY = scaleByPixelRatio(e.offsetY);
-  updatePointerMoveData(pointer, posX, posY);
+  updatePointerMoveData(canvas, pointer, posX, posY);
 });
 
 window.addEventListener("mouseup", () => {
@@ -1524,7 +1538,13 @@ canvas.addEventListener("touchstart", (e) => {
   for (let i = 0; i < touches.length; i++) {
     let posX = scaleByPixelRatio(touches[i].pageX);
     let posY = scaleByPixelRatio(touches[i].pageY);
-    updatePointerDownData(pointers[i + 1], touches[i].identifier, posX, posY);
+    updatePointerDownData(
+      canvas,
+      pointers[i + 1],
+      touches[i].identifier,
+      posX,
+      posY
+    );
   }
 });
 
@@ -1538,7 +1558,7 @@ canvas.addEventListener(
       if (!pointer.down) continue;
       let posX = scaleByPixelRatio(touches[i].pageX);
       let posY = scaleByPixelRatio(touches[i].pageY);
-      updatePointerMoveData(pointer, posX, posY);
+      updatePointerMoveData(canvas, pointer, posX, posY);
     }
   },
   false
@@ -1558,155 +1578,3 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "Spacebar" || e.key === " ")
     splatStack.push(Math.random() * 20 + 5);
 });
-
-function updatePointerDownData(
-  pointer: Pointer,
-  id: number,
-  posX: number,
-  posY: number
-): void {
-  pointer.id = id;
-  pointer.down = true;
-  pointer.moved = false;
-  pointer.texcoordX = posX / canvas.width;
-  pointer.texcoordY = 1.0 - posY / canvas.height;
-  pointer.prevTexcoordX = pointer.texcoordX;
-  pointer.prevTexcoordY = pointer.texcoordY;
-  pointer.deltaX = 0;
-  pointer.deltaY = 0;
-  pointer.color = generateColor();
-}
-
-function updatePointerMoveData(
-  pointer: Pointer,
-  posX: number,
-  posY: number
-): void {
-  pointer.prevTexcoordX = pointer.texcoordX;
-  pointer.prevTexcoordY = pointer.texcoordY;
-  pointer.texcoordX = posX / canvas.width;
-  pointer.texcoordY = 1.0 - posY / canvas.height;
-  pointer.deltaX = correctDeltaX(pointer.texcoordX - pointer.prevTexcoordX);
-  pointer.deltaY = correctDeltaY(pointer.texcoordY - pointer.prevTexcoordY);
-  pointer.moved = Math.abs(pointer.deltaX) > 0 || Math.abs(pointer.deltaY) > 0;
-}
-
-function updatePointerUpData(pointer: Pointer): void {
-  pointer.down = false;
-}
-
-function correctDeltaX(delta: number): number {
-  const aspectRatio = canvas.width / canvas.height;
-  if (aspectRatio < 1) delta *= aspectRatio;
-  return delta;
-}
-
-function correctDeltaY(delta: number): number {
-  const aspectRatio = canvas.width / canvas.height;
-  if (aspectRatio > 1) delta /= aspectRatio;
-  return delta;
-}
-
-function generateColor(): { r: number; g: number; b: number } {
-  const c = HSVtoRGB(Math.random(), 1.0, 1.0);
-  c.r *= 0.15;
-  c.g *= 0.15;
-  c.b *= 0.15;
-  return c;
-}
-
-function HSVtoRGB(
-  h: number,
-  s: number,
-  v: number
-): { r: number; g: number; b: number } {
-  let r: number = 0;
-  let g: number = 0;
-  let b: number = 0;
-  const i = Math.floor(h * 6);
-  const f = h * 6 - i;
-  const p = v * (1 - s);
-  const q = v * (1 - f * s);
-  const t = v * (1 - (1 - f) * s);
-
-  switch (i % 6) {
-    case 0:
-      (r = v), (g = t), (b = p);
-      break;
-    case 1:
-      (r = q), (g = v), (b = p);
-      break;
-    case 2:
-      (r = p), (g = v), (b = t);
-      break;
-    case 3:
-      (r = p), (g = q), (b = v);
-      break;
-    case 4:
-      (r = t), (g = p), (b = v);
-      break;
-    case 5:
-      (r = v), (g = p), (b = q);
-      break;
-  }
-
-  return { r, g, b };
-}
-
-function normalizeColor(input: { r: number; g: number; b: number }): {
-  r: number;
-  g: number;
-  b: number;
-} {
-  return {
-    r: input.r / 255,
-    g: input.g / 255,
-    b: input.b / 255,
-  };
-}
-
-function wrap(value: number, min: number, max: number): number {
-  const range = max - min;
-  if (range === 0) return min;
-  return ((value - min) % range) + min;
-}
-
-function getResolution(resolution: number): { width: number; height: number } {
-  let aspectRatio = gl.drawingBufferWidth / gl.drawingBufferHeight;
-  if (aspectRatio < 1) aspectRatio = 1.0 / aspectRatio;
-
-  const min = Math.round(resolution);
-  const max = Math.round(resolution * aspectRatio);
-
-  if (gl.drawingBufferWidth > gl.drawingBufferHeight) {
-    return { width: max, height: min };
-  } else {
-    return { width: min, height: max };
-  }
-}
-
-function getTextureScale(
-  texture: { width: number; height: number },
-  width: number,
-  height: number
-): { x: number; y: number } {
-  return {
-    x: width / texture.width,
-    y: height / texture.height,
-  };
-}
-
-function scaleByPixelRatio(input: number): number {
-  const pixelRatio = window.devicePixelRatio || 1;
-  return Math.floor(input * pixelRatio);
-}
-
-function hashCode(s: string): number {
-  if (s.length === 0) return 0;
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) {
-    hash = (hash << 5) - hash + s.charCodeAt(i);
-    hash |= 0; // Convert to 32bit integer
-  }
-  return hash;
-}
