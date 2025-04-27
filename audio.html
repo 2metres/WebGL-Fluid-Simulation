@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Voice-change-O-matic</title>
+
+    <link rel="shortcut icon" href="favicon.ico" type="image/x-icon" />
+    <style>
+      /* * {
+        user-select: none;
+      } */
+      /* html,
+      body {
+        overflow: hidden;
+        background-color: #000;
+      } */
+      /* body {
+        margin: 0;
+        position: fixed;
+        width: 100%;
+        height: 100%;
+        border-radius: 30px;
+      } */
+      canvas {
+        width: 100%;
+        /* height: 100%; */
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <canvas></canvas>
+
+      <form class="controls">
+        <div>
+          <label for="voice">Voice setting</label>
+          <select id="voice" name="voice">
+            <option value="distortion">Distortion</option>
+            <option value="convolver">Reverb</option>
+            <option value="biquad">Bass Boost</option>
+            <option value="delay">Echo Delay</option>
+            <option value="off" selected>Off</option>
+          </select>
+        </div>
+        <div>
+          <label for="visual">Visualizer setting</label>
+          <select id="visual" name="visual">
+            <option value="sinewave">Sinewave</option>
+            <option value="frequencybars" selected>Frequency bars</option>
+            <option value="off">Off</option>
+          </select>
+        </div>
+        <div>
+          <a class="mute">Mute</a>
+        </div>
+      </form>
+    </div>
+
+    <!-- Below is your custom application script -->
+
+    <script src="./src/audio-visualizer.ts"></script>
+  </body>
+</html>

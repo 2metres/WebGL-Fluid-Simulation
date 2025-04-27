@@ -53,6 +53,72 @@ const config: Config = {
   SUNRAYS_WEIGHT: 1.0,
 };
 
+window.addEventListener("DOMContentLoaded", init);
+
+async function init() {
+  window.removeEventListener("DOMContentLoaded", init);
+
+  const audioCtx = new AudioContext();
+
+  // Set up the different audio nodes we will use for the app
+  const analyser = audioCtx.createAnalyser();
+  // analyser.minDecibels = -90;
+  // analyser.maxDecibels = -10;
+  analyser.smoothingTimeConstant = 0.85;
+  let source: MediaStreamAudioSourceNode;
+
+  // Main block for doing the audio recording
+  navigator.mediaDevices
+    .getUserMedia({ audio: true })
+    .then((stream) => {
+      source = audioCtx.createMediaStreamSource(stream);
+      analyser.connect(audioCtx.destination);
+
+      visualize(analyser);
+    })
+    .catch(function (err) {
+      console.error("The following gUM error occured: " + err);
+    });
+
+  console.log({ source });
+}
+
+function visualize(analyser: AnalyserNode) {
+  const WIDTH = 1024;
+  const HEIGHT = 100;
+
+  analyser.fftSize = 256;
+
+  const bufferLengthAlt = analyser.frequencyBinCount;
+  const dataArrayAlt = new Uint8Array(bufferLengthAlt);
+
+  const drawAlt = () => {
+    const frame = requestAnimationFrame(drawAlt);
+
+    analyser.getByteFrequencyData(dataArrayAlt);
+
+    const barWidth = (WIDTH / bufferLengthAlt) * 2.5;
+    let x = 0;
+
+    for (let i = 0; i < bufferLengthAlt; i++) {
+      const barHeight = HEIGHT - dataArrayAlt[i] / 2;
+
+      const rect = {
+        x,
+        y: HEIGHT - barHeight / 2,
+        width: barWidth,
+        height: barHeight / 2,
+      };
+
+      console.log({ ...rect, frame });
+
+      x += barWidth + 1;
+    }
+  };
+
+  drawAlt();
+}
+
 class PointerPrototype implements Pointer {
   id = -1;
   texcoordX = 0;
