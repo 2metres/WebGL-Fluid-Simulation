@@ -1,12 +1,43 @@
 import { config } from "./config";
 import { Pointer } from "./types";
 
+export function addKeywords(source: string, keywords?: string[]) {
+  if (keywords == null) return source;
+  let keywordsString = "";
+  keywords.forEach((keyword: string) => {
+    keywordsString += "#define " + keyword + "\n";
+  });
+  return keywordsString + source;
+}
+
 export function calcDeltaTime(lastUpdateTime: number): number {
   let now = Date.now();
   let dt = (now - lastUpdateTime) / 1000;
   dt = Math.min(dt, 0.016666);
   lastUpdateTime = now;
   return dt;
+}
+
+export function compileShader(
+  gl: WebGL2RenderingContext,
+  type: number,
+  source: string,
+  keywords?: string[]
+) {
+  source = addKeywords(source, keywords);
+
+  const shader = gl.createShader(type);
+
+  if (!shader) {
+    throw new Error("Failed to create shader");
+  }
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+    console.trace(gl.getShaderInfoLog(shader));
+
+  return shader;
 }
 
 export function correctDeltaX(

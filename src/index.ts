@@ -8,6 +8,7 @@ import * as shaders from "./shaders";
 import { Format, Pointer, WebGLContext } from "./types";
 import {
   calcDeltaTime,
+  compileShader,
   createDoubleFramebuffer,
   createFramebuffer,
   generateColor,
@@ -248,6 +249,7 @@ class Material {
     let program = this.programs[hash];
     if (program == null) {
       let fragmentShader = compileShader(
+        gl,
         gl.FRAGMENT_SHADER,
         this.fragmentShaderSource,
         keywords
@@ -315,106 +317,98 @@ function getUniforms(program: WebGLProgram) {
   }
   return uniforms;
 }
-
-function compileShader(type: number, source: string, keywords?: string[]) {
-  source = addKeywords(source, keywords);
-
-  const shader = gl.createShader(type);
-
-  if (!shader) {
-    throw new Error("Failed to create shader");
-  }
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
-    console.trace(gl.getShaderInfoLog(shader));
-
-  return shader;
-}
-
-function addKeywords(source: string, keywords?: string[]) {
-  if (keywords == null) return source;
-  let keywordsString = "";
-  keywords.forEach((keyword: string) => {
-    keywordsString += "#define " + keyword + "\n";
-  });
-  return keywordsString + source;
-}
-
 const baseVertexShader = compileShader(
+  gl,
   gl.VERTEX_SHADER,
   shaders.BASE_VERTEX_SHADER_SOURCE
 );
 const blurVertexShader = compileShader(
+  gl,
   gl.VERTEX_SHADER,
   shaders.BLUR_VERTEX_SHADER_SOURCE
 );
 const blurShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.BLUR_SHADER_SOURCE
 );
 const copyShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.COPY_SHADER_SOURCE
 );
 const clearShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.CLEAR_SHADER_SOURCE
 );
 const colorShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.COLOR_SHADER_SOURCE
 );
 const checkerboardShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.CHECKERBOARD_SHADER_SOURCE
 );
 const bloomPrefilterShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.BLOOM_PREFILTER_SHADER_SOURCE
 );
 const bloomBlurShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.BLOOM_BLUR_SHADER_SOURCE
 );
 const bloomFinalShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.BLOOM_FINAL_SHADER_SOURCE
 );
 const sunraysMaskShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.SUNRAYS_MASK_SHADER_SOURCE
 );
 const sunraysShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.SUNRAYS_SHADER_SOURCE
 );
 const splatShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.SPLAT_SHADER_SOURCE
 );
 const advectionShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.ADVECTION_SHADER_SOURCE
 );
 const divergenceShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.DIVERGENCE_SHADER_SOURCE
 );
 const curlShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.CURL_SHADER_SOURCE
 );
 const vorticityShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.VORTICITY_SHADER_SOURCE
 );
 const pressureShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.PRESSURE_SHADER_SOURCE
 );
 const gradientSubtractShader = compileShader(
+  gl,
   gl.FRAGMENT_SHADER,
   shaders.GRADIENT_SUBTRACT_SHADER_SOURCE
 );
