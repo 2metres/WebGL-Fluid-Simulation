@@ -77,3 +77,18 @@ export interface DoubleFramebufferObject {
   write: FramebufferObject;
   swap: () => void;
 }
+
+interface Material {
+  vertexShader: WebGLShader;
+  fragmentShaderSource: string;
+  programs: WebGLProgram[];
+  activeProgram: WebGLProgram | null;
+  setKeywords: (keywords: string[]) => void;
+  bind: () => void;
+}
+
+interface Program {
+  uniforms: Record<string, WebGLUniformLocation | null>;
+  program: WebGLProgram;
+  bind: () => void;
+}

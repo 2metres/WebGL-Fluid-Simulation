@@ -1,9 +1,11 @@
 "use strict";
 
 import { GUI } from "dat.gui";
+import { ColorFormats } from "tinycolor2";
 
+import { config } from "./config";
 import * as shaders from "./shaders";
-import { Config, Format, Pointer, WebGLContext } from "./types";
+import { Format, Pointer, WebGLContext } from "./types";
 import {
   generateColor,
   getResolution,
@@ -16,108 +18,10 @@ import {
   updatePointerUpData,
   wrap,
 } from "./utils";
-import { ColorFormats } from "tinycolor2";
 
 const canvas = document.getElementsByTagName("canvas")[0];
 
 resizeCanvas();
-
-const config: Config = {
-  AUTOSPLAT: false,
-  SPLATS: 10,
-  BPM: 120,
-  SIM_RESOLUTION: 128,
-  DYE_RESOLUTION: 1024,
-  CAPTURE_RESOLUTION: 512,
-  DENSITY_DISSIPATION: 1,
-  VELOCITY_DISSIPATION: 0.2,
-  PRESSURE: 0.8,
-  PRESSURE_ITERATIONS: 20,
-  CURL: 30,
-  SPLAT_RADIUS: 0.25,
-  SPLAT_FORCE: 6000,
-  SHADING: true,
-  COLORFUL: true,
-  COLOR_UPDATE_SPEED: 10,
-  PAUSED: false,
-  BACK_COLOR: { r: 0, g: 0, b: 0 },
-  TRANSPARENT: false,
-  BLOOM: true,
-  BLOOM_ITERATIONS: 8,
-  BLOOM_RESOLUTION: 256,
-  BLOOM_INTENSITY: 0.8,
-  BLOOM_THRESHOLD: 0.6,
-  BLOOM_SOFT_KNEE: 0.7,
-  SUNRAYS: true,
-  SUNRAYS_RESOLUTION: 196,
-  SUNRAYS_WEIGHT: 1.0,
-};
-
-window.addEventListener("DOMContentLoaded", init);
-
-async function init() {
-  window.removeEventListener("DOMContentLoaded", init);
-
-  const audioCtx = new AudioContext();
-
-  // Set up the different audio nodes we will use for the app
-  const analyser = audioCtx.createAnalyser();
-  // analyser.minDecibels = -90;
-  // analyser.maxDecibels = -10;
-  analyser.smoothingTimeConstant = 0.85;
-  let source: MediaStreamAudioSourceNode;
-
-  // Main block for doing the audio recording
-  navigator.mediaDevices
-    .getUserMedia({ audio: true })
-    .then((stream) => {
-      source = audioCtx.createMediaStreamSource(stream);
-      analyser.connect(audioCtx.destination);
-
-      visualize(analyser);
-    })
-    .catch(function (err) {
-      console.error("The following gUM error occured: " + err);
-    });
-
-  console.log({ source });
-}
-
-function visualize(analyser: AnalyserNode) {
-  const WIDTH = 1024;
-  const HEIGHT = 100;
-
-  analyser.fftSize = 256;
-
-  const bufferLengthAlt = analyser.frequencyBinCount;
-  const dataArrayAlt = new Uint8Array(bufferLengthAlt);
-
-  const drawAlt = () => {
-    const frame = requestAnimationFrame(drawAlt);
-
-    analyser.getByteFrequencyData(dataArrayAlt);
-
-    const barWidth = (WIDTH / bufferLengthAlt) * 2.5;
-    let x = 0;
-
-    for (let i = 0; i < bufferLengthAlt; i++) {
-      const barHeight = HEIGHT - dataArrayAlt[i] / 2;
-
-      const rect = {
-        x,
-        y: HEIGHT - barHeight / 2,
-        width: barWidth,
-        height: barHeight / 2,
-      };
-
-      console.log({ ...rect, frame });
-
-      x += barWidth + 1;
-    }
-  };
-
-  drawAlt();
-}
 
 class PointerPrototype implements Pointer {
   id = -1;
@@ -139,6 +43,10 @@ pointers.push(new PointerPrototype());
 
 const { gl, ext } = getWebGLContext(canvas);
 
+function isMobile() {
+  return /Mobi|Android/i.test(navigator.userAgent);
+}
+
 if (isMobile()) {
   config.DYE_RESOLUTION = 512;
 }
@@ -147,6 +55,76 @@ if (!ext.supportLinearFiltering) {
   config.SHADING = false;
   config.BLOOM = false;
   config.SUNRAYS = false;
+}
+
+export function autoSplat(bpm: number = 0) {
+  if (config.BPM === 0 || config.PAUSED) {
+    clearInterval();
+  }
+  if (config.BPM > 0) {
+    setTimeout(() => {
+      splatStack.push(config.SPLATS);
+      autoSplat(config.BPM);
+    }, 60000 / config.BPM);
+  }
+}
+
+export function startGUI() {
+  const gui = new GUI({ width: 300 });
+
+  gui
+    .add(config, "DYE_RESOLUTION", {
+      "very high": 2048,
+      high: 1024,
+      medium: 512,
+      low: 256,
+      "very low": 128,
+    })
+    .name("quality")
+    .onFinishChange(initFramebuffers);
+  gui
+    .add(config, "SIM_RESOLUTION", { 32: 32, 64: 64, 128: 128, 256: 256 })
+    .name("sim resolution")
+    .onFinishChange(initFramebuffers);
+  gui.add(config, "DENSITY_DISSIPATION", 0.01, 5.0).name("density diffusion");
+  gui.add(config, "VELOCITY_DISSIPATION", 0, 5.0).name("velocity diffusion");
+  gui.add(config, "PRESSURE", 0.0, 0.99).name("pressure");
+  gui.add(config, "CURL", 0, 50).name("vorticity").step(1);
+  gui.add(config, "SPLAT_RADIUS", 0.01, 1).name("splat radius");
+  gui.add(config, "SHADING").name("shading").onFinishChange(updateKeywords);
+  gui.add(config, "COLORFUL").name("colorful");
+  gui.add(config, "PAUSED").name("paused").listen();
+
+  let autoSplatFolder = gui.addFolder("Auto Splat");
+  autoSplatFolder
+    .add(config, "AUTOSPLAT")
+    .name("enabled")
+    .onFinishChange(updateKeywords);
+  autoSplatFolder.add(config, "BPM", 0, 240).name("BPM").step(1);
+  autoSplatFolder.add(config, "SPLATS", 0, 128).name("Count").step(1);
+
+  let bloomFolder = gui.addFolder("Bloom");
+  bloomFolder
+    .add(config, "BLOOM")
+    .name("enabled")
+    .onFinishChange(updateKeywords);
+  bloomFolder.add(config, "BLOOM_INTENSITY", 0.1, 2.0).name("intensity");
+  bloomFolder.add(config, "BLOOM_THRESHOLD", 0.0, 1.0).name("threshold");
+
+  let sunraysFolder = gui.addFolder("Sunrays");
+  sunraysFolder
+    .add(config, "SUNRAYS")
+    .name("enabled")
+    .onFinishChange(updateKeywords);
+  sunraysFolder.add(config, "SUNRAYS_WEIGHT", 0.3, 1.0).name("weight");
+
+  let captureFolder = gui.addFolder("Capture");
+  captureFolder.addColor(config, "BACK_COLOR").name("background color");
+  captureFolder.add(config, "TRANSPARENT").name("transparent");
+
+  if (isMobile()) gui.close();
+
+  autoSplat(config.BPM);
 }
 
 startGUI();
@@ -243,157 +221,6 @@ function supportRenderTextureFormat(
 
   let status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
   return status == gl.FRAMEBUFFER_COMPLETE;
-}
-
-function startGUI() {
-  const gui = new GUI({ width: 300 });
-
-  gui
-    .add(config, "DYE_RESOLUTION", {
-      "very high": 2048,
-      high: 1024,
-      medium: 512,
-      low: 256,
-      "very low": 128,
-    })
-    .name("quality")
-    .onFinishChange(initFramebuffers);
-  gui
-    .add(config, "SIM_RESOLUTION", { 32: 32, 64: 64, 128: 128, 256: 256 })
-    .name("sim resolution")
-    .onFinishChange(initFramebuffers);
-  gui.add(config, "DENSITY_DISSIPATION", 0.01, 5.0).name("density diffusion");
-  gui.add(config, "VELOCITY_DISSIPATION", 0, 5.0).name("velocity diffusion");
-  gui.add(config, "PRESSURE", 0.0, 0.99).name("pressure");
-  gui.add(config, "CURL", 0, 50).name("vorticity").step(1);
-  gui.add(config, "SPLAT_RADIUS", 0.01, 1).name("splat radius");
-  gui.add(config, "SHADING").name("shading").onFinishChange(updateKeywords);
-  gui.add(config, "COLORFUL").name("colorful");
-  gui.add(config, "PAUSED").name("paused").listen();
-
-  let autoSplatFolder = gui.addFolder("Auto Splat");
-  autoSplatFolder
-    .add(config, "AUTOSPLAT")
-    .name("enabled")
-    .onFinishChange(updateKeywords);
-  autoSplatFolder.add(config, "BPM", 0, 240).name("BPM").step(1);
-  autoSplatFolder.add(config, "SPLATS", 0, 128).name("Count").step(1);
-
-  // gui
-  //   .add(
-  //     {
-  //       fun: () => {
-  //         splatStack.push(Math.random() * 20 + 5);
-  //       },
-  //     },
-  //     "fun"
-  //   )
-  //   .name("Random splats");
-
-  let bloomFolder = gui.addFolder("Bloom");
-  bloomFolder
-    .add(config, "BLOOM")
-    .name("enabled")
-    .onFinishChange(updateKeywords);
-  bloomFolder.add(config, "BLOOM_INTENSITY", 0.1, 2.0).name("intensity");
-  bloomFolder.add(config, "BLOOM_THRESHOLD", 0.0, 1.0).name("threshold");
-
-  let sunraysFolder = gui.addFolder("Sunrays");
-  sunraysFolder
-    .add(config, "SUNRAYS")
-    .name("enabled")
-    .onFinishChange(updateKeywords);
-  sunraysFolder.add(config, "SUNRAYS_WEIGHT", 0.3, 1.0).name("weight");
-
-  let captureFolder = gui.addFolder("Capture");
-  captureFolder.addColor(config, "BACK_COLOR").name("background color");
-  captureFolder.add(config, "TRANSPARENT").name("transparent");
-  captureFolder.add({ fun: captureScreenshot }, "fun").name("take screenshot");
-
-  if (isMobile()) gui.close();
-
-  autoSplat(config.BPM);
-}
-
-function autoSplat(bpm: number = 0) {
-  if (config.BPM === 0 || config.PAUSED) {
-    clearInterval();
-  }
-  if (config.BPM > 0) {
-    setTimeout(() => {
-      splatStack.push(config.SPLATS);
-      autoSplat(config.BPM);
-    }, 60000 / config.BPM);
-  }
-}
-
-function isMobile() {
-  return /Mobi|Android/i.test(navigator.userAgent);
-}
-
-function captureScreenshot() {
-  let res = getResolution(gl, config.CAPTURE_RESOLUTION);
-  let target = createFramebuffer(
-    res.width,
-    res.height,
-    ext.formatRGBA.internalFormat,
-    ext.formatRGBA.format,
-    ext.halfFloatTexType,
-    gl.NEAREST
-  );
-  render(target);
-
-  let texture = framebufferToTexture(target);
-
-  let captureCanvas = textureToCanvas(texture, target.width, target.height);
-  let dataURI = captureCanvas.toDataURL();
-  downloadURI("fluid.png", dataURI);
-  URL.revokeObjectURL(dataURI);
-}
-
-function framebufferToTexture(target: {
-  texture?: WebGLTexture;
-  fbo: any;
-  width: number;
-  height: number;
-  texelSizeX: number;
-  texelSizeY: number;
-  attach?: (id: any) => any;
-}) {
-  gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
-  let length = target.width * target.height * 4;
-  let texture = new Float32Array(length);
-  gl.readPixels(0, 0, target.width, target.height, gl.RGBA, gl.FLOAT, texture);
-  return texture;
-}
-
-function textureToCanvas(
-  texture: ArrayLike<number>,
-  width: number,
-  height: number
-) {
-  let captureCanvas = document.createElement("canvas");
-  let ctx = captureCanvas.getContext("2d");
-  if (!ctx) {
-    throw new Error("Failed to get canvas context");
-  }
-  captureCanvas.width = width;
-  captureCanvas.height = height;
-
-  let imageData = ctx.createImageData(width, height);
-  imageData.data.set(texture);
-  ctx.putImageData(imageData, 0, 0);
-
-  return captureCanvas;
-}
-
-function downloadURI(filename: string, uri: string) {
-  let link = document.createElement("a");
-  link.download = filename;
-  link.href = uri;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
 }
 
 interface Material {
