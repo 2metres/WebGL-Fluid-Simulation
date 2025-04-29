@@ -54,7 +54,6 @@ export interface WebGLContext {
     formatRG: Format;
     formatR: Format;
     halfFloatTexType: number;
-    supportLinearFiltering: boolean;
   };
 }
 

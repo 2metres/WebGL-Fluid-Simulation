@@ -7,21 +7,25 @@ import { config } from "./config";
 import * as shaders from "./shaders";
 import { Format, Pointer, WebGLContext } from "./types";
 import {
+  calcDeltaTime,
+  createDoubleFramebuffer,
+  createFramebuffer,
   generateColor,
   getResolution,
   getTextureScale,
   hashCode,
   normalizeColor,
+  resizeCanvas,
   scaleByPixelRatio,
+  updateColors,
   updatePointerDownData,
   updatePointerMoveData,
   updatePointerUpData,
-  wrap,
 } from "./utils";
 
 const canvas = document.getElementsByTagName("canvas")[0];
 
-resizeCanvas();
+resizeCanvas(canvas);
 
 class PointerPrototype implements Pointer {
   id = -1;
@@ -49,12 +53,6 @@ function isMobile() {
 
 if (isMobile()) {
   config.DYE_RESOLUTION = 512;
-}
-if (!ext.supportLinearFiltering) {
-  config.DYE_RESOLUTION = 512;
-  config.SHADING = false;
-  config.BLOOM = false;
-  config.SUNRAYS = false;
 }
 
 export function autoSplat(bpm: number = 0) {
@@ -144,11 +142,7 @@ function getWebGLContext(canvas: HTMLCanvasElement): WebGLContext {
     throw new Error("WebGL not supported");
   }
 
-  let supportLinearFiltering: boolean;
-
   gl.getExtension("EXT_color_buffer_float");
-  supportLinearFiltering = !!gl.getExtension("OES_texture_float_linear");
-
   gl.clearColor(0.0, 0.0, 0.0, 1.0);
 
   const halfFloatTexType = gl.HALF_FLOAT;
@@ -169,7 +163,6 @@ function getWebGLContext(canvas: HTMLCanvasElement): WebGLContext {
       formatRG,
       formatR,
       halfFloatTexType,
-      supportLinearFiltering,
     },
   };
 }
@@ -403,8 +396,7 @@ const splatShader = compileShader(
 );
 const advectionShader = compileShader(
   gl.FRAGMENT_SHADER,
-  shaders.ADVECTION_SHADER_SOURCE,
-  ext.supportLinearFiltering ? undefined : ["MANUAL_FILTERING"]
+  shaders.ADVECTION_SHADER_SOURCE
 );
 const divergenceShader = compileShader(
   gl.FRAGMENT_SHADER,
@@ -599,12 +591,13 @@ function initFramebuffers() {
   const rgba = ext.formatRGBA;
   const rg = ext.formatRG;
   const r = ext.formatR;
-  const filtering = ext.supportLinearFiltering ? gl.LINEAR : gl.NEAREST;
+  const filtering = gl.LINEAR;
 
   gl.disable(gl.BLEND);
 
   if (dye == null) {
     dye = createDoubleFramebuffer(
+      gl,
       dyeRes.width,
       dyeRes.height,
       rgba.internalFormat,
@@ -628,6 +621,7 @@ function initFramebuffers() {
 
   if (velocity == null)
     velocity = createDoubleFramebuffer(
+      gl,
       simRes.width,
       simRes.height,
       rg.internalFormat,
@@ -647,6 +641,7 @@ function initFramebuffers() {
     );
 
   divergence = createFramebuffer(
+    gl,
     simRes.width,
     simRes.height,
     r.internalFormat,
@@ -655,6 +650,7 @@ function initFramebuffers() {
     gl.NEAREST
   );
   curl = createFramebuffer(
+    gl,
     simRes.width,
     simRes.height,
     r.internalFormat,
@@ -663,6 +659,7 @@ function initFramebuffers() {
     gl.NEAREST
   );
   pressure = createDoubleFramebuffer(
+    gl,
     simRes.width,
     simRes.height,
     r.internalFormat,
@@ -680,9 +677,10 @@ function initBloomFramebuffers() {
 
   const texType = ext.halfFloatTexType;
   const rgba = ext.formatRGBA;
-  const filtering = ext.supportLinearFiltering ? gl.LINEAR : gl.NEAREST;
+  const filtering = gl.LINEAR;
 
   bloom = createFramebuffer(
+    gl,
     res.width,
     res.height,
     rgba.internalFormat,
@@ -699,6 +697,7 @@ function initBloomFramebuffers() {
     if (width < 2 || height < 2) break;
 
     let fbo = createFramebuffer(
+      gl,
       width,
       height,
       rgba.internalFormat,
@@ -715,9 +714,10 @@ function initSunraysFramebuffers() {
 
   const texType = ext.halfFloatTexType;
   const r = ext.formatR;
-  const filtering = ext.supportLinearFiltering ? gl.LINEAR : gl.NEAREST;
+  const filtering = gl.LINEAR;
 
   sunrays = createFramebuffer(
+    gl,
     res.width,
     res.height,
     r.internalFormat,
@@ -726,6 +726,7 @@ function initSunraysFramebuffers() {
     filtering
   );
   sunraysTemp = createFramebuffer(
+    gl,
     res.width,
     res.height,
     r.internalFormat,
@@ -733,89 +734,6 @@ function initSunraysFramebuffers() {
     texType,
     filtering
   );
-}
-
-function createFramebuffer(
-  w: number,
-  h: number,
-  internalFormat: number,
-  format: number,
-  type: number,
-  param: number
-) {
-  gl.activeTexture(gl.TEXTURE0);
-  let texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, param);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, param);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, w, h, 0, format, type, null);
-
-  let fbo = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-  gl.framebufferTexture2D(
-    gl.FRAMEBUFFER,
-    gl.COLOR_ATTACHMENT0,
-    gl.TEXTURE_2D,
-    texture,
-    0
-  );
-  gl.viewport(0, 0, w, h);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-
-  let texelSizeX = 1.0 / w;
-  let texelSizeY = 1.0 / h;
-
-  return {
-    texture,
-    fbo,
-    width: w,
-    height: h,
-    texelSizeX,
-    texelSizeY,
-    attach(id: number) {
-      gl.activeTexture(gl.TEXTURE0 + id);
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      return id;
-    },
-  };
-}
-
-function createDoubleFramebuffer(
-  w: number,
-  h: number,
-  internalFormat: number,
-  format: number,
-  type: number,
-  param: number
-) {
-  let fbo1 = createFramebuffer(w, h, internalFormat, format, type, param);
-  let fbo2 = createFramebuffer(w, h, internalFormat, format, type, param);
-
-  return {
-    width: w,
-    height: h,
-    texelSizeX: fbo1.texelSizeX,
-    texelSizeY: fbo1.texelSizeY,
-    get read() {
-      return fbo1;
-    },
-    set read(value) {
-      fbo1 = value;
-    },
-    get write() {
-      return fbo2;
-    },
-    set write(value) {
-      fbo2 = value;
-    },
-    swap() {
-      let temp = fbo1;
-      fbo1 = fbo2;
-      fbo2 = temp;
-    },
-  };
 }
 
 function resizeFBO(
@@ -827,7 +745,7 @@ function resizeFBO(
   type: any,
   param: any
 ) {
-  let newFBO = createFramebuffer(w, h, internalFormat, format, type, param);
+  let newFBO = createFramebuffer(gl, w, h, internalFormat, format, type, param);
   copyProgram.bind();
   gl.uniform1i(copyProgram.uniforms.uTexture, target.attach(0));
   blit(newFBO);
@@ -877,7 +795,15 @@ function resizeDoubleFBO(
     type,
     param
   );
-  target.write = createFramebuffer(w, h, internalFormat, format, type, param);
+  target.write = createFramebuffer(
+    gl,
+    w,
+    h,
+    internalFormat,
+    format,
+    type,
+    param
+  );
   target.width = w;
   target.height = h;
   target.texelSizeX = 1.0 / w;
@@ -946,47 +872,17 @@ multipleSplats(Math.random() * 20 + 5);
 
 let lastUpdateTime = Date.now();
 let colorUpdateTimer = 0.0;
+
 update();
 
 function update() {
-  const dt = calcDeltaTime();
-  if (resizeCanvas()) initFramebuffers();
-  updateColors(dt);
+  const dt = calcDeltaTime(lastUpdateTime);
+  if (resizeCanvas(canvas)) initFramebuffers();
+  updateColors(dt, colorUpdateTimer, pointers);
   applyInputs();
   if (!config.PAUSED) step(dt);
   render(null);
   requestAnimationFrame(update);
-}
-
-function calcDeltaTime() {
-  let now = Date.now();
-  let dt = (now - lastUpdateTime) / 1000;
-  dt = Math.min(dt, 0.016666);
-  lastUpdateTime = now;
-  return dt;
-}
-
-function resizeCanvas() {
-  let width = scaleByPixelRatio(canvas.clientWidth);
-  let height = scaleByPixelRatio(canvas.clientHeight);
-  if (canvas.width != width || canvas.height != height) {
-    canvas.width = width;
-    canvas.height = height;
-    return true;
-  }
-  return false;
-}
-
-function updateColors(dt: number) {
-  if (!config.COLORFUL) return;
-
-  colorUpdateTimer += dt * config.COLOR_UPDATE_SPEED;
-  if (colorUpdateTimer >= 1) {
-    colorUpdateTimer = wrap(colorUpdateTimer, 0, 1);
-    pointers.forEach((p) => {
-      p.color = generateColor();
-    });
-  }
 }
 
 function applyInputs() {
@@ -1080,12 +976,11 @@ function step(dt: number) {
     velocity.texelSizeX,
     velocity.texelSizeY
   );
-  if (!ext.supportLinearFiltering)
-    gl.uniform2f(
-      advectionProgram.uniforms.dyeTexelSize,
-      velocity.texelSizeX,
-      velocity.texelSizeY
-    );
+  gl.uniform2f(
+    advectionProgram.uniforms.dyeTexelSize,
+    velocity.texelSizeX,
+    velocity.texelSizeY
+  );
   let velocityId = velocity.read.attach(0);
   gl.uniform1i(advectionProgram.uniforms.uVelocity, velocityId);
   gl.uniform1i(advectionProgram.uniforms.uSource, velocityId);
@@ -1097,12 +992,11 @@ function step(dt: number) {
   blit(velocity.write);
   velocity.swap();
 
-  if (!ext.supportLinearFiltering)
-    gl.uniform2f(
-      advectionProgram.uniforms.dyeTexelSize,
-      dye.texelSizeX,
-      dye.texelSizeY
-    );
+  gl.uniform2f(
+    advectionProgram.uniforms.dyeTexelSize,
+    dye.texelSizeX,
+    dye.texelSizeY
+  );
   gl.uniform1i(advectionProgram.uniforms.uVelocity, velocity.read.attach(0));
   gl.uniform1i(advectionProgram.uniforms.uSource, dye.read.attach(1));
   gl.uniform1f(
