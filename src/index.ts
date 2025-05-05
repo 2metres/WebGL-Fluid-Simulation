@@ -199,29 +199,7 @@ async function init() {
   let sunraysTemp: Framebuffer;
 
   let ditheringTexture = createTextureAsync(gl, "LDR_LLL1_0.png");
-
-  const {
-    baseVertexShader,
-    blurVertexShader,
-    blurShader,
-    copyShader,
-    clearShader,
-    colorShader,
-    checkerboardShader,
-    bloomPrefilterShader,
-    bloomBlurShader,
-    bloomFinalShader,
-    sunraysMaskShader,
-    sunraysShader,
-    splatShader,
-    advectionShader,
-    divergenceShader,
-    curlShader,
-    vorticityShader,
-    pressureShader,
-    gradientSubtractShader,
-  } = compileShaders(gl);
-
+  const { baseVertexShader, blurVertexShader, ...shaders } = compileShaders(gl);
   const {
     blurProgram,
     copyProgram,
@@ -241,23 +219,23 @@ async function init() {
     pressureProgram,
     gradientSubtractProgram,
   } = createPrograms(gl, [
-    ["blur", blurVertexShader, blurShader],
-    ["copy", baseVertexShader, copyShader],
-    ["clear", baseVertexShader, clearShader],
-    ["color", baseVertexShader, colorShader],
-    ["checkerboard", baseVertexShader, checkerboardShader],
-    ["bloomPrefilter", baseVertexShader, bloomPrefilterShader],
-    ["bloomBlur", baseVertexShader, bloomBlurShader],
-    ["bloomFinal", baseVertexShader, bloomFinalShader],
-    ["sunraysMask", baseVertexShader, sunraysMaskShader],
-    ["sunrays", baseVertexShader, sunraysShader],
-    ["splat", baseVertexShader, splatShader],
-    ["advection", baseVertexShader, advectionShader],
-    ["divergence", baseVertexShader, divergenceShader],
-    ["curl", baseVertexShader, curlShader],
-    ["vorticity", baseVertexShader, vorticityShader],
-    ["pressure", baseVertexShader, pressureShader],
-    ["gradientSubtract", baseVertexShader, gradientSubtractShader],
+    ["blur", blurVertexShader, shaders.blurShader],
+    ["copy", baseVertexShader, shaders.copyShader],
+    ["clear", baseVertexShader, shaders.clearShader],
+    ["color", baseVertexShader, shaders.colorShader],
+    ["checkerboard", baseVertexShader, shaders.checkerboardShader],
+    ["bloomPrefilter", baseVertexShader, shaders.bloomPrefilterShader],
+    ["bloomBlur", baseVertexShader, shaders.bloomBlurShader],
+    ["bloomFinal", baseVertexShader, shaders.bloomFinalShader],
+    ["sunraysMask", baseVertexShader, shaders.sunraysMaskShader],
+    ["sunrays", baseVertexShader, shaders.sunraysShader],
+    ["splat", baseVertexShader, shaders.splatShader],
+    ["advection", baseVertexShader, shaders.advectionShader],
+    ["divergence", baseVertexShader, shaders.divergenceShader],
+    ["curl", baseVertexShader, shaders.curlShader],
+    ["vorticity", baseVertexShader, shaders.vorticityShader],
+    ["pressure", baseVertexShader, shaders.pressureShader],
+    ["gradientSubtract", baseVertexShader, shaders.gradientSubtractShader],
   ]);
 
   const displayMaterial = new Material(
