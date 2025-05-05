@@ -5,15 +5,28 @@ import { ColorFormats } from "tinycolor2";
 
 import { config } from "./config";
 import * as shaders from "./shaders";
-import { Format, Pointer, WebGLContext } from "./types";
+import {
+  BlurTarget,
+  BlurTemp,
+  DoubleFramebuffer,
+  Format,
+  Framebuffer,
+  Pointer,
+  WebGLContext,
+} from "./types";
 import {
   calcDeltaTime,
   compileShader,
+  createBlit,
   createDoubleFramebuffer,
   createFramebuffer,
+  createProgram,
+  createTextureAsync,
   generateColor,
   getResolution,
+  getSupportedFormat,
   getTextureScale,
+  getUniforms,
   hashCode,
   normalizeColor,
   resizeCanvas,
@@ -24,6 +37,8 @@ import {
   updatePointerUpData,
 } from "./utils";
 import { initializeMidiController } from "./midi";
+import { Program } from "./Program";
+import { Material } from "./Material";
 
 const canvas = document.getElementsByTagName("canvas")[0];
 
@@ -66,14 +81,20 @@ if (isMobile()) {
   config.DYE_RESOLUTION = 512;
 }
 
+let autoSplatInterval: number | undefined;
+
 export function autoSplat(bpm: number = 0) {
-  if (config.BPM === 0 || config.PAUSED) {
-    clearInterval();
+  if (bpm === 0 || config.PAUSED) {
+    if (autoSplatInterval !== undefined) {
+      clearInterval(autoSplatInterval);
+      autoSplatInterval = undefined;
+    }
+    return;
   }
-  if (config.BPM > 0) {
-    setTimeout(() => {
+  if (bpm > 0) {
+    autoSplatInterval = window.setTimeout(() => {
       splatStack.push(config.SPLATS);
-      autoSplat(config.BPM);
+      autoSplat(bpm);
     }, 60000 / config.BPM);
   }
 }
@@ -178,155 +199,6 @@ function getWebGLContext(canvas: HTMLCanvasElement): WebGLContext {
   };
 }
 
-function getSupportedFormat(
-  gl: WebGL2RenderingContext,
-  internalFormat: number,
-  format: number,
-  type: number
-): Format {
-  if (!supportRenderTextureFormat(gl, internalFormat, format, type)) {
-    switch (internalFormat) {
-      case gl.R16F:
-        return getSupportedFormat(gl, gl.RG16F, gl.RG, type);
-      case gl.RG16F:
-        return getSupportedFormat(gl, gl.RGBA16F, gl.RGBA, type);
-    }
-  }
-
-  return {
-    internalFormat,
-    format,
-  };
-}
-
-function supportRenderTextureFormat(
-  gl: WebGL2RenderingContext,
-  internalFormat: number,
-  format: number,
-  type: number
-) {
-  let texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, 4, 4, 0, format, type, null);
-
-  let fbo = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-  gl.framebufferTexture2D(
-    gl.FRAMEBUFFER,
-    gl.COLOR_ATTACHMENT0,
-    gl.TEXTURE_2D,
-    texture,
-    0
-  );
-
-  let status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-  return status == gl.FRAMEBUFFER_COMPLETE;
-}
-
-interface Material {
-  vertexShader: WebGLShader;
-  fragmentShaderSource: string;
-  programs: WebGLProgram[];
-  activeProgram: WebGLProgram | null;
-  setKeywords: (keywords: string[]) => void;
-  bind: () => void;
-}
-
-interface Program {
-  uniforms: Record<string, WebGLUniformLocation | null>;
-  program: WebGLProgram;
-  bind: () => void;
-}
-
-class Material {
-  uniforms: Record<string, WebGLUniformLocation | null> = {};
-
-  constructor(vertexShader: WebGLShader, fragmentShaderSource: string) {
-    this.vertexShader = vertexShader;
-    this.fragmentShaderSource = fragmentShaderSource;
-    this.programs = [];
-    this.activeProgram = null;
-  }
-
-  setKeywords = (keywords: string[]) => {
-    let hash = 0;
-    for (let i = 0; i < keywords.length; i++) hash += hashCode(keywords[i]);
-
-    let program = this.programs[hash];
-    if (program == null) {
-      let fragmentShader = compileShader(
-        gl,
-        gl.FRAGMENT_SHADER,
-        this.fragmentShaderSource,
-        keywords
-      );
-      if (this.vertexShader && fragmentShader) {
-        program = createProgram(this.vertexShader, fragmentShader);
-      } else {
-        throw new Error("Vertex or Fragment shader is null");
-      }
-      this.programs[hash] = program;
-    }
-
-    if (program == this.activeProgram) return;
-
-    this.uniforms = getUniforms(program);
-    this.activeProgram = program;
-  };
-
-  bind = () => {
-    gl.useProgram(this.activeProgram);
-  };
-}
-
-class Program {
-  constructor(
-    vertexShader: WebGLShader | null,
-    fragmentShader: WebGLShader | null
-  ) {
-    this.uniforms = {};
-
-    if (vertexShader && fragmentShader) {
-      this.program = createProgram(vertexShader, fragmentShader);
-    } else {
-      throw new Error("Vertex or Fragment shader is null");
-    }
-    this.uniforms = getUniforms(this.program);
-  }
-
-  bind = () => {
-    gl.useProgram(this.program);
-  };
-}
-
-function createProgram(vertexShader: WebGLShader, fragmentShader: WebGLShader) {
-  let program = gl.createProgram();
-
-  gl.attachShader(program, vertexShader);
-  gl.attachShader(program, fragmentShader);
-  gl.linkProgram(program);
-
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS))
-    console.trace(gl.getProgramInfoLog(program));
-
-  return program;
-}
-
-function getUniforms(program: WebGLProgram) {
-  let uniforms: Record<string, WebGLUniformLocation | null> = {};
-  let uniformCount = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
-
-  for (let i = 0; i < uniformCount; i++) {
-    let activeUniform = gl.getActiveUniform(program, i);
-    let uniformName = activeUniform ? activeUniform.name : "";
-    uniforms[uniformName] = gl.getUniformLocation(program, uniformName);
-  }
-  return uniforms;
-}
 const baseVertexShader = compileShader(
   gl,
   gl.VERTEX_SHADER,
@@ -423,171 +295,57 @@ const gradientSubtractShader = compileShader(
   shaders.GRADIENT_SUBTRACT_SHADER_SOURCE
 );
 
-const blit = (() => {
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(
-    gl.ARRAY_BUFFER,
-    new Float32Array([-1, -1, -1, 1, 1, 1, 1, -1]),
-    gl.STATIC_DRAW
-  );
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(
-    gl.ELEMENT_ARRAY_BUFFER,
-    new Uint16Array([0, 1, 2, 0, 2, 3]),
-    gl.STATIC_DRAW
-  );
-  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-  gl.enableVertexAttribArray(0);
+// Create the blit function with the current WebGL context
+const blit = createBlit(gl);
 
-  return (
-    target: {
-      width: number;
-      height: number;
-      fbo: WebGLFramebuffer | null;
-    } | null,
-    clear = false
-  ) => {
-    if (target == null) {
-      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    } else {
-      gl.viewport(0, 0, target.width, target.height);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
-    }
-    if (clear) {
-      gl.clearColor(0.0, 0.0, 0.0, 1.0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-    }
-    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
-  };
-})();
+let dye: DoubleFramebuffer;
+let velocity: DoubleFramebuffer;
+let divergence: Framebuffer;
+let curl: Framebuffer;
+let pressure: DoubleFramebuffer;
+let bloom: Framebuffer;
+let bloomFramebuffers: Framebuffer[] = [];
+let sunrays: Framebuffer;
+let sunraysTemp: Framebuffer;
 
-let dye: {
-  texelSizeX: number;
-  texelSizeY: number;
-  read: any;
-  write: any;
-  swap: any;
-  width: number;
-  height: number;
-};
+let ditheringTexture = createTextureAsync(gl, "LDR_LLL1_0.png");
 
-let velocity: {
-  texelSizeX: number;
-  texelSizeY: number;
-  read: {
-    texture: WebGLTexture;
-    fbo: WebGLFramebuffer;
-    width: number;
-    height: number;
-    texelSizeX: number;
-    texelSizeY: number;
-    attach(id: any): any;
-  };
-  write: {
-    texture: WebGLTexture;
-    fbo: WebGLFramebuffer;
-    width: number;
-    height: number;
-    texelSizeX: number;
-    texelSizeY: number;
-    attach(id: any): any;
-  };
-  width: number;
-  height: number;
-  swap: () => void;
-};
-
-let divergence: {
-  attach: any;
-  texture?: WebGLTexture;
-  fbo: WebGLFramebuffer;
-  width: number;
-  height: number;
-  texelSizeX: number;
-  texelSizeY: number;
-};
-
-let curl: {
-  attach: any;
-  texture?: WebGLTexture;
-  fbo: WebGLFramebuffer | null;
-  width: number;
-  height: number;
-  texelSizeX: number;
-  texelSizeY: number;
-};
-
-let pressure: {
-  read: any;
-  write: any;
-  swap: any;
-  width: number;
-  height: number;
-  texelSizeX: number;
-  texelSizeY: number;
-};
-
-let bloom: {
-  attach: any;
-  texture?: WebGLTexture;
-  fbo: WebGLFramebuffer;
-  width: number;
-  height: number;
-  texelSizeX: number;
-  texelSizeY: number;
-};
-let bloomFramebuffers: any[] = [];
-let sunrays: {
-  attach: any;
-  texture?: WebGLTexture;
-  fbo: WebGLFramebuffer;
-  width: number;
-  height: number;
-  texelSizeX: number;
-  texelSizeY: number;
-};
-let sunraysTemp: {
-  texture: WebGLTexture;
-  fbo: WebGLFramebuffer;
-  width: number;
-  height: number;
-  texelSizeX: number;
-  texelSizeY: number;
-  attach(id: any): any;
-};
-
-let ditheringTexture = createTextureAsync("LDR_LLL1_0.png");
-
-const blurProgram = new Program(blurVertexShader, blurShader);
-const copyProgram = new Program(baseVertexShader, copyShader);
-const clearProgram = new Program(baseVertexShader, clearShader);
-const colorProgram = new Program(baseVertexShader, colorShader);
-const checkerboardProgram = new Program(baseVertexShader, checkerboardShader);
+const blurProgram = new Program(gl, blurVertexShader, blurShader);
+const copyProgram = new Program(gl, baseVertexShader, copyShader);
+const clearProgram = new Program(gl, baseVertexShader, clearShader);
+const colorProgram = new Program(gl, baseVertexShader, colorShader);
+const checkerboardProgram = new Program(
+  gl,
+  baseVertexShader,
+  checkerboardShader
+);
 const bloomPrefilterProgram = new Program(
+  gl,
   baseVertexShader,
   bloomPrefilterShader
 );
-const bloomBlurProgram = new Program(baseVertexShader, bloomBlurShader);
-const bloomFinalProgram = new Program(baseVertexShader, bloomFinalShader);
-const sunraysMaskProgram = new Program(baseVertexShader, sunraysMaskShader);
-const sunraysProgram = new Program(baseVertexShader, sunraysShader);
-const splatProgram = new Program(baseVertexShader, splatShader);
-const advectionProgram = new Program(baseVertexShader, advectionShader);
-const divergenceProgram = new Program(baseVertexShader, divergenceShader);
-const curlProgram = new Program(baseVertexShader, curlShader);
-const vorticityProgram = new Program(baseVertexShader, vorticityShader);
-const pressureProgram = new Program(baseVertexShader, pressureShader);
+const bloomBlurProgram = new Program(gl, baseVertexShader, bloomBlurShader);
+const bloomFinalProgram = new Program(gl, baseVertexShader, bloomFinalShader);
+const sunraysMaskProgram = new Program(gl, baseVertexShader, sunraysMaskShader);
+const sunraysProgram = new Program(gl, baseVertexShader, sunraysShader);
+const splatProgram = new Program(gl, baseVertexShader, splatShader);
+const advectionProgram = new Program(gl, baseVertexShader, advectionShader);
+const divergenceProgram = new Program(gl, baseVertexShader, divergenceShader);
+const curlProgram = new Program(gl, baseVertexShader, curlShader);
+const vorticityProgram = new Program(gl, baseVertexShader, vorticityShader);
+const pressureProgram = new Program(gl, baseVertexShader, pressureShader);
 const gradientSubtractProgram = new Program(
+  gl,
   baseVertexShader,
   gradientSubtractShader
 );
 const displayMaterial = new Material(
+  gl,
   baseVertexShader,
   shaders.DISPLAY_SHADER_SOURCE
 );
 
-function initFramebuffers() {
+function initFramebuffers({ gl, ext }: WebGLContext) {
   let simRes = getResolution(gl, config.SIM_RESOLUTION);
   let dyeRes = getResolution(gl, config.DYE_RESOLUTION);
 
@@ -613,6 +371,7 @@ function initFramebuffers() {
     dye.height = dyeRes.height;
   } else {
     dye = resizeDoubleFBO(
+      gl,
       dye,
       dyeRes.width,
       dyeRes.height,
@@ -635,6 +394,7 @@ function initFramebuffers() {
     );
   else
     velocity = resizeDoubleFBO(
+      gl,
       velocity,
       simRes.width,
       simRes.height,
@@ -672,11 +432,12 @@ function initFramebuffers() {
     gl.NEAREST
   );
 
-  initBloomFramebuffers();
-  initSunraysFramebuffers();
+  initBloomFramebuffers({ gl, ext });
+  initSunraysFramebuffers({ gl, ext });
 }
 
-function initBloomFramebuffers() {
+function initBloomFramebuffers({ gl, ext }: WebGLContext) {
+  let bloomFramebuffers: any[] = [];
   let res = getResolution(gl, config.BLOOM_RESOLUTION);
 
   const texType = ext.halfFloatTexType;
@@ -713,7 +474,7 @@ function initBloomFramebuffers() {
   }
 }
 
-function initSunraysFramebuffers() {
+function initSunraysFramebuffers({ gl, ext }: WebGLContext) {
   let res = getResolution(gl, config.SUNRAYS_RESOLUTION);
 
   const texType = ext.halfFloatTexType;
@@ -741,6 +502,7 @@ function initSunraysFramebuffers() {
 }
 
 function resizeFBO(
+  gl: WebGL2RenderingContext,
   target: { attach: (arg0: number) => number },
   w: number,
   h: number,
@@ -757,6 +519,7 @@ function resizeFBO(
 }
 
 function resizeDoubleFBO(
+  gl: WebGL2RenderingContext,
   target: {
     width: number;
     height: number;
@@ -791,6 +554,7 @@ function resizeDoubleFBO(
 ) {
   if (target.width == w && target.height == h) return target;
   target.read = resizeFBO(
+    gl,
     target.read,
     w,
     h,
@@ -820,48 +584,6 @@ function resizeDoubleFBO(
   return target;
 }
 
-function createTextureAsync(url: string) {
-  let texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-  gl.texImage2D(
-    gl.TEXTURE_2D,
-    0,
-    gl.RGB,
-    1,
-    1,
-    0,
-    gl.RGB,
-    gl.UNSIGNED_BYTE,
-    new Uint8Array([255, 255, 255])
-  );
-
-  let obj = {
-    texture,
-    width: 1,
-    height: 1,
-    attach(id: number) {
-      gl.activeTexture(gl.TEXTURE0 + id);
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      return id;
-    },
-  };
-
-  let image = new Image();
-  image.onload = () => {
-    obj.width = image.width;
-    obj.height = image.height;
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, image);
-  };
-  image.src = url;
-
-  return obj;
-}
-
 function updateKeywords() {
   let displayKeywords = [];
   if (config.SHADING) displayKeywords.push("SHADING");
@@ -871,22 +593,22 @@ function updateKeywords() {
 }
 
 updateKeywords();
-initFramebuffers();
+initFramebuffers({ gl, ext });
 multipleSplats(Math.random() * 20 + 5);
 
 let lastUpdateTime = Date.now();
 let colorUpdateTimer = 0.0;
 
-update();
+update({ gl, ext });
 
-function update() {
+function update({ gl, ext }: WebGLContext) {
   const dt = calcDeltaTime(lastUpdateTime);
-  if (resizeCanvas(canvas)) initFramebuffers();
+  if (resizeCanvas(canvas)) initFramebuffers({ gl, ext });
   updateColors(dt, colorUpdateTimer, pointers);
   applyInputs();
-  if (!config.PAUSED) step(dt);
+  if (!config.PAUSED) step(gl, dt);
   render(null);
-  requestAnimationFrame(update);
+  requestAnimationFrame(() => update({ gl, ext }));
 }
 
 function applyInputs() {
@@ -900,7 +622,7 @@ function applyInputs() {
   });
 }
 
-function step(dt: number) {
+function step(gl: WebGL2RenderingContext, dt: number) {
   gl.disable(gl.BLEND);
 
   curlProgram.bind();
@@ -1144,7 +866,12 @@ function applyBloom(
 
 function applySunrays(
   source: { attach: (arg0: number) => number },
-  mask: { attach: (arg0: number) => number },
+  mask: {
+    width: number;
+    height: number;
+    fbo: WebGLFramebuffer;
+    attach: (arg0: number) => number;
+  },
   destination: any
 ) {
   gl.disable(gl.BLEND);
@@ -1156,18 +883,6 @@ function applySunrays(
   gl.uniform1f(sunraysProgram.uniforms.weight, config.SUNRAYS_WEIGHT);
   gl.uniform1i(sunraysProgram.uniforms.uTexture, mask.attach(0));
   blit(destination);
-}
-
-interface BlurTarget {
-  texelSizeX: number;
-  texelSizeY: number;
-  attach: (id: number) => number;
-}
-
-interface BlurTemp {
-  texelSizeX: number;
-  texelSizeY: number;
-  attach: (id: number) => number;
 }
 
 function blur(target: BlurTarget, temp: BlurTemp, iterations: number): void {

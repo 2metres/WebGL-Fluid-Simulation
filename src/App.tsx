@@ -1,45 +1,81 @@
-import React from "react";
-import { drawHalftoneWave } from "./drawHalftoneWave";
+import { JSX, RefObject, useEffect, useRef, useState } from "react";
+import { useDebounceCallback, useResizeObserver } from "usehooks-ts";
+import { getSupportedFormat, resizeCanvas, scaleByPixelRatio } from "./utils";
+// import { drawHalftoneWave } from "./drawHalftoneWave";
 
-export function App(): React.JSX.Element {
-  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+interface Size {
+  width?: number;
+  height?: number;
+}
 
-  React.useEffect(() => {
-    const canvas = canvasRef.current;
+export function App(): JSX.Element {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [{ width, height }, setSize] = useState<Size>({
+    width: undefined,
+    height: undefined,
+  });
+
+  const onResize = useDebounceCallback((size) => {
+    setSize(size);
+    resizeCanvas(ref.current!);
+  }, 10);
+
+  useResizeObserver({
+    ref: ref as RefObject<HTMLElement>,
+    onResize,
+  });
+
+  useEffect(() => {
+    const canvas = ref.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+
+    const options = {
+      alpha: true,
+      depth: false,
+      stencil: false,
+      antialias: false,
+      preserveDrawingBuffer: false,
+    };
+
+    const ctx = canvas.getContext("webgl2", options) as WebGL2RenderingContext;
+
     if (!ctx) return;
 
-    const { gl, ext } = getWebGLContext(canvas);
+    ctx.getExtension("EXT_color_buffer_float");
+    ctx.clearColor(0.0, 0.0, 0.0, 1.0);
 
-    let animationFrameId: number;
-    let time = 0;
+    const halfFloatTexType = ctx.HALF_FLOAT;
 
-    const resizeCanvas = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+    const formatRGBA = getSupportedFormat(
+      ctx,
+      ctx.RGBA16F,
+      ctx.RGBA,
+      halfFloatTexType
+    );
+    const formatRG = getSupportedFormat(
+      ctx,
+      ctx.RG16F,
+      ctx.RG,
+      halfFloatTexType
+    );
+    const formatR = getSupportedFormat(
+      ctx,
+      ctx.R16F,
+      ctx.RED,
+      halfFloatTexType
+    );
+
+    const ext = {
+      formatRGBA,
+      formatRG,
+      formatR,
+      halfFloatTexType,
     };
 
-    const animate = () => {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.1)";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    console.log({ ctx, ext });
+  }, [ref]);
 
-      drawHalftoneWave(canvas, time);
+  console.log({ width, height });
 
-      time += 0.05;
-      animationFrameId = requestAnimationFrame(animate);
-    };
-
-    resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
-
-    animate();
-
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-      window.removeEventListener("resize", resizeCanvas);
-    };
-  }, []);
-
-  return <canvas ref={canvasRef} className="w-full h-screen bg-black" />;
+  return <canvas ref={ref} style={{ width: "100%", height: "100%" }} />;
 }

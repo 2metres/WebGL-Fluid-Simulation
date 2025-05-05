@@ -1,5 +1,5 @@
 import { config } from "./config";
-import { Pointer } from "./types";
+import { Format, Pointer, WebGLContext } from "./types";
 
 export function addKeywords(source: string, keywords?: string[]) {
   if (keywords == null) return source;
@@ -275,9 +275,183 @@ export function normalizeColor(input: { r: number; g: number; b: number }): {
   };
 }
 
+export function getSupportedFormat(
+  gl: WebGL2RenderingContext,
+  internalFormat: number,
+  format: number,
+  type: number
+): Format {
+  if (!supportRenderTextureFormat(gl, internalFormat, format, type)) {
+    switch (internalFormat) {
+      case gl.R16F:
+        return getSupportedFormat(gl, gl.RG16F, gl.RG, type);
+      case gl.RG16F:
+        return getSupportedFormat(gl, gl.RGBA16F, gl.RGBA, type);
+    }
+  }
+
+  return {
+    internalFormat,
+    format,
+  };
+}
+
+export function supportRenderTextureFormat(
+  gl: WebGL2RenderingContext,
+  internalFormat: number,
+  format: number,
+  type: number
+) {
+  let texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, 4, 4, 0, format, type, null);
+
+  let fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(
+    gl.FRAMEBUFFER,
+    gl.COLOR_ATTACHMENT0,
+    gl.TEXTURE_2D,
+    texture,
+    0
+  );
+
+  let status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  return status == gl.FRAMEBUFFER_COMPLETE;
+}
+
+export function createProgram(
+  gl: WebGL2RenderingContext,
+  vertexShader: WebGLShader,
+  fragmentShader: WebGLShader
+) {
+  let program = gl.createProgram();
+
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+    console.trace(gl.getProgramInfoLog(program));
+
+  return program;
+}
+
+export function getUniforms(gl: WebGL2RenderingContext, program: WebGLProgram) {
+  let uniforms: Record<string, WebGLUniformLocation | null> = {};
+  let uniformCount = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+
+  for (let i = 0; i < uniformCount; i++) {
+    let activeUniform = gl.getActiveUniform(program, i);
+    let uniformName = activeUniform ? activeUniform.name : "";
+    uniforms[uniformName] = gl.getUniformLocation(program, uniformName);
+  }
+  return uniforms;
+}
+
+export function createBlit(gl: WebGL2RenderingContext) {
+  // Create and set up the vertex buffer
+  const vertexBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+  gl.bufferData(
+    gl.ARRAY_BUFFER,
+    new Float32Array([-1, -1, -1, 1, 1, 1, 1, -1]),
+    gl.STATIC_DRAW
+  );
+
+  // Create and set up the element buffer
+  const indexBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+  gl.bufferData(
+    gl.ELEMENT_ARRAY_BUFFER,
+    new Uint16Array([0, 1, 2, 0, 2, 3]),
+    gl.STATIC_DRAW
+  );
+
+  // Enable vertex attribute
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(0);
+
+  // Return the blit function
+  return (
+    target: {
+      width: number;
+      height: number;
+      fbo: WebGLFramebuffer | null;
+    } | null,
+    clear = false
+  ) => {
+    // Set the appropriate framebuffer and viewport
+    if (target == null) {
+      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    } else {
+      gl.viewport(0, 0, target.width, target.height);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+    }
+
+    // Clear if needed
+    if (clear) {
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+
+    // Draw the quad
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+  };
+}
+
+export function createTextureAsync(gl: WebGL2RenderingContext, url: string) {
+  let texture = gl.createTexture();
+
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGB,
+    1,
+    1,
+    0,
+    gl.RGB,
+    gl.UNSIGNED_BYTE,
+    new Uint8Array([255, 255, 255])
+  );
+
+  let obj = {
+    texture,
+    width: 1,
+    height: 1,
+    attach(id: number) {
+      gl.activeTexture(gl.TEXTURE0 + id);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      return id;
+    },
+  };
+
+  let image = new Image();
+  image.onload = () => {
+    obj.width = image.width;
+    obj.height = image.height;
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, image);
+  };
+  image.src = url;
+
+  return obj;
+}
+
 export function resizeCanvas(canvas: HTMLCanvasElement) {
   let width = scaleByPixelRatio(canvas.clientWidth);
   let height = scaleByPixelRatio(canvas.clientHeight);
+
   if (canvas.width != width || canvas.height != height) {
     canvas.width = width;
     canvas.height = height;

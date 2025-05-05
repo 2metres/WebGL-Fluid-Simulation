@@ -77,17 +77,41 @@ export interface DoubleFramebufferObject {
   swap: () => void;
 }
 
-interface Material {
-  vertexShader: WebGLShader;
-  fragmentShaderSource: string;
-  programs: WebGLProgram[];
-  activeProgram: WebGLProgram | null;
-  setKeywords: (keywords: string[]) => void;
-  bind: () => void;
+export interface Texture {
+  texture: WebGLTexture;
+  width: number;
+  height: number;
+  texelSizeX: number;
+  texelSizeY: number;
+  attach(id: number): number;
 }
 
-interface Program {
-  uniforms: Record<string, WebGLUniformLocation | null>;
-  program: WebGLProgram;
-  bind: () => void;
+export interface Framebuffer extends Texture {
+  fbo: WebGLFramebuffer | null;
+}
+
+export interface DoubleFramebuffer {
+  read: Omit<Framebuffer, "fbo"> & { fbo: WebGLFramebuffer };
+  write: Omit<Framebuffer, "fbo"> & { fbo: WebGLFramebuffer };
+  width: number;
+  height: number;
+  texelSizeX: number;
+  texelSizeY: number;
+  swap: () => void;
+}
+
+export interface BlurTarget {
+  width: number;
+  height: number;
+  texelSizeX: number;
+  texelSizeY: number;
+  attach(id: number): number;
+  fbo: WebGLFramebuffer | null;
+}
+
+export interface BlurTemp {
+  width: number;
+  height: number;
+  attach(id: number): number;
+  fbo: WebGLFramebuffer | null;
 }
