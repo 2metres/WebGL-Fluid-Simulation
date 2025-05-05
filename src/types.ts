@@ -29,19 +29,6 @@ export interface Config {
   SUNRAYS_WEIGHT: number;
 }
 
-export interface Pointer {
-  id: number;
-  texcoordX: number;
-  texcoordY: number;
-  prevTexcoordX: number;
-  prevTexcoordY: number;
-  deltaX: number;
-  deltaY: number;
-  down: boolean;
-  moved: boolean;
-  color: { r: number; g: number; b: number };
-}
-
 export interface Format {
   internalFormat: number;
   format: number;

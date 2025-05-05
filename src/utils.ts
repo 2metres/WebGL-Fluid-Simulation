@@ -1,5 +1,28 @@
-import { config } from "./config";
-import { Format, Pointer, WebGLContext } from "./types";
+import { Config, Format } from "./types";
+import {
+  ADVECTION_SHADER_SOURCE,
+  BASE_VERTEX_SHADER_SOURCE,
+  BLOOM_BLUR_SHADER_SOURCE,
+  BLOOM_FINAL_SHADER_SOURCE,
+  BLOOM_PREFILTER_SHADER_SOURCE,
+  BLUR_SHADER_SOURCE,
+  BLUR_VERTEX_SHADER_SOURCE,
+  CHECKERBOARD_SHADER_SOURCE,
+  CLEAR_SHADER_SOURCE,
+  COLOR_SHADER_SOURCE,
+  COPY_SHADER_SOURCE,
+  CURL_SHADER_SOURCE,
+  DIVERGENCE_SHADER_SOURCE,
+  GRADIENT_SUBTRACT_SHADER_SOURCE,
+  PRESSURE_SHADER_SOURCE,
+  SPLAT_SHADER_SOURCE,
+  SUNRAYS_MASK_SHADER_SOURCE,
+  SUNRAYS_SHADER_SOURCE,
+  VORTICITY_SHADER_SOURCE,
+} from "./shaders";
+import { Pointer } from "./Pointer";
+import { Program } from "./Program";
+import { Material } from "./Material";
 
 export function addKeywords(source: string, keywords?: string[]) {
   if (keywords == null) return source;
@@ -10,20 +33,12 @@ export function addKeywords(source: string, keywords?: string[]) {
   return keywordsString + source;
 }
 
-export function calcDeltaTime(lastUpdateTime: number): number {
-  let now = Date.now();
-  let dt = (now - lastUpdateTime) / 1000;
-  dt = Math.min(dt, 0.016666);
-  lastUpdateTime = now;
-  return dt;
-}
-
 export function compileShader(
   gl: WebGL2RenderingContext,
   type: number,
   source: string,
   keywords?: string[]
-) {
+): WebGLShader {
   source = addKeywords(source, keywords);
 
   const shader = gl.createShader(type);
@@ -38,6 +53,72 @@ export function compileShader(
     console.trace(gl.getShaderInfoLog(shader));
 
   return shader;
+}
+
+const VERTEX_SHADER = 0x8b31;
+const FRAGMENT_SHADER = 0x8b30;
+
+const SHADERS: Array<[name: string, source: string, type: number]> = [
+  ["baseVertex", BASE_VERTEX_SHADER_SOURCE, VERTEX_SHADER],
+  ["blurVertex", BLUR_VERTEX_SHADER_SOURCE, VERTEX_SHADER],
+  ["blur", BLUR_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["copy", COPY_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["clear", CLEAR_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["color", COLOR_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["checkerboard", CHECKERBOARD_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["bloomPrefilter", BLOOM_PREFILTER_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["bloomBlur", BLOOM_BLUR_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["bloomFinal", BLOOM_FINAL_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["sunraysMask", SUNRAYS_MASK_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["sunrays", SUNRAYS_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["splat", SPLAT_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["advection", ADVECTION_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["divergence", DIVERGENCE_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["curl", CURL_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["vorticity", VORTICITY_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["pressure", PRESSURE_SHADER_SOURCE, FRAGMENT_SHADER],
+  ["gradientSubtract", GRADIENT_SUBTRACT_SHADER_SOURCE, FRAGMENT_SHADER],
+];
+
+export function compileShaders(
+  gl: WebGL2RenderingContext
+): Record<string, WebGLShader> {
+  const compiledShaders: Record<string, WebGLShader> = {};
+
+  SHADERS.forEach(([name, source, type]) => {
+    compiledShaders[`${name}Shader`] = compileShader(gl, type, source);
+  });
+
+  return compiledShaders;
+}
+
+export function createPrograms(
+  gl: WebGL2RenderingContext,
+  programs: Array<[string, WebGLShader, WebGLShader]>
+): Record<string, Program> {
+  const compiledPrograms: Record<string, Program> = {};
+
+  programs.forEach(([name, vertex, fragment]) => {
+    compiledPrograms[`${name}Program`] = new Program(gl, vertex, fragment);
+  });
+
+  return compiledPrograms;
+}
+
+export function updateKeywords(config: Config, displayMaterial: Material) {
+  let displayKeywords = [];
+  if (config.SHADING) displayKeywords.push("SHADING");
+  if (config.BLOOM) displayKeywords.push("BLOOM");
+  if (config.SUNRAYS) displayKeywords.push("SUNRAYS");
+  displayMaterial.setKeywords(displayKeywords);
+}
+
+export function calcDeltaTime(lastUpdateTime: number): number {
+  let now = Date.now();
+  let dt = (now - lastUpdateTime) / 1000;
+  dt = Math.min(dt, 0.016666);
+  lastUpdateTime = now;
+  return dt;
 }
 
 export function correctDeltaX(
@@ -223,6 +304,12 @@ export function hashCode(s: string): number {
     hash |= 0; // Convert to 32bit integer
   }
   return hash;
+}
+
+export function correctRadius(canvas: HTMLCanvasElement, radius: number) {
+  let aspectRatio = canvas.width / canvas.height;
+  if (aspectRatio > 1) radius *= aspectRatio;
+  return radius;
 }
 
 export function HSVtoRGB(
@@ -466,6 +553,8 @@ export function scaleByPixelRatio(input: number): number {
 }
 
 export function updateColors(
+  gl: WebGL2RenderingContext,
+  config: Config,
   dt: number,
   colorUpdateTimer: number,
   pointers: Pointer[]

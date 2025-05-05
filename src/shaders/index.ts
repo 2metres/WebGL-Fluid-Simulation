@@ -1,5 +1,6 @@
 export * from "./advection";
 export * from "./baseVertex";
+export * from "./baseVertex";
 export * from "./bloomBlur";
 export * from "./bloomFinal";
 export * from "./bloomPrefilter";
