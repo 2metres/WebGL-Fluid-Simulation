@@ -23,8 +23,18 @@ import {
   updatePointerMoveData,
   updatePointerUpData,
 } from "./utils";
+import { initializeMidiController } from "./midi";
 
 const canvas = document.getElementsByTagName("canvas")[0];
+
+document.addEventListener("DOMContentLoaded", initializeMidiController);
+document.addEventListener("DOMContentLoaded", init);
+
+async function init() {
+  document.removeEventListener("DOMContentLoaded", init);
+
+  console.log("Initializing visualizer...");
+}
 
 resizeCanvas(canvas);
 
